@@ -8,7 +8,7 @@ export const CONFIG_PATH = path.join(CCM_HOME, 'config.json');
 export const CACHE_DIR = path.join(CCM_HOME, 'cache');
 export const USAGE_CACHE = path.join(CACHE_DIR, 'usage.json');
 
-export const DEFAULT_CLAUDE_DIR = path.join(os.homedir(), '.claude');
+export const DEFAULT_CLAUDE_DIR = process.env.CCM_CLAUDE_DIR || path.join(os.homedir(), '.claude');
 export const HOME_CLAUDE_JSON = path.join(os.homedir(), '.claude.json');
 
 export const OVERRIDES_DIR = path.join(CCM_HOME, 'overrides');

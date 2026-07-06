@@ -88,7 +88,11 @@
   section{margin-top:44px}
   h2{font-family:var(--mono); font-size:12px; color:var(--amber); letter-spacing:.42em; font-weight:400; margin-bottom:4px}
   .hint{font-size:12.5px; color:var(--muted); margin:6px 0 10px}
+  .scope{display:flex; gap:8px; margin:2px 0 12px}
+  .scope-btn.active{background:var(--amber); color:#141310}
   .srow{display:grid; grid-template-columns:96px 110px 90px 1fr auto; gap:14px; align-items:center; padding:11px 8px; border-bottom:1px solid var(--hair); font-size:13px}
+  .srow.with-dir{grid-template-columns:96px 110px 170px 90px 1fr auto}
+  .srow .dir{font-family:var(--mono); color:var(--muted); font-size:12px; overflow:hidden; white-space:nowrap}
   .srow .t{font-family:var(--mono); color:var(--ink2)}
   .srow .from{font-family:var(--mono); color:var(--muted)}
   .srow .id{font-family:var(--mono); color:var(--ink)}
@@ -137,7 +141,11 @@
 
   <section>
     <h2>TRANSFERS</h2>
-    <p class="hint">Sessions for the folder the board was opened from. Resume one where it lives, or transfer it to another account and continue there — the original stays put.</p>
+    <p class="hint">Resume a session where it lives, or transfer it to another account and continue there — the original stays put. Resuming opens the terminal in the session's own folder.</p>
+    <div class="scope" role="tablist">
+      <button class="board-btn mini scope-btn active" id="scope-here" onclick="setScope('here')">This folder</button>
+      <button class="board-btn mini scope-btn" id="scope-all" onclick="setScope('all')">All folders</button>
+    </div>
     <div id="sessions"></div>
   </section>
 
@@ -244,17 +252,33 @@ function renderBoard(){
     if(e.key==='Enter'&&e.target===r) board(r.dataset.name);
   }));
 }
+let scope=new URLSearchParams(location.search).get('scope')==='all'?'all':'here';
+function setScope(s){
+  scope=s;
+  $('#scope-here').classList.toggle('active',s==='here');
+  $('#scope-all').classList.toggle('active',s==='all');
+  history.replaceState(null,'',s==='all'?'?scope=all':location.pathname);
+  load();
+}
+$('#scope-here').classList.toggle('active',scope==='here');
+$('#scope-all').classList.toggle('active',scope==='all');
+function trimDir(d){
+  d=String(d).replace(/</g,'&lt;');
+  return d.length>24?'…'+d.slice(-23):d;
+}
 function renderSessions(){
   const el=$('#sessions');
   if(!state.sessions.length){
-    el.innerHTML='<div class="empty">No sessions for this folder yet — they appear once you work with Claude Code here.</div>';
+    el.innerHTML=`<div class="empty">${scope==='all'?'No sessions on any account yet.':'No sessions for this folder yet — switch to “All folders” or work with Claude Code here first.'}</div>`;
     return;
   }
+  const all=scope==='all';
   el.innerHTML=state.sessions.map(s=>{
     const targets=state.profiles.filter(p=>!(s.source.kind==='profile'&&p.name===s.source.label));
-    return `<div class="srow">
+    return `<div class="srow ${all?'with-dir':''}">
       <span class="t">${ago(s.mtime)}</span>
       <span class="from"><span style="color:${s.source.hue??'var(--muted)'}">${s.source.kind==='profile'?'●':'○'}</span> ${s.source.label}</span>
+      ${all?`<span class="dir" title="${(s.dir??'').replace(/"/g,'&quot;')}">${trimDir(s.dirShort??'?')}</span>`:''}
       <span class="id">${s.id.slice(0,8)}</span>
       <span class="title">${(s.title??'').replace(/</g,'&lt;')}</span>
       <span class="act">
@@ -271,14 +295,15 @@ function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('sho
 async function board(name){ const r=await api('/api/launch',{name}); toast(r.error??`Opened ${name} in Windows Terminal`); }
 async function transfer(id){
   const to=$('#sel-'+id.slice(0,8)).value;
+  const s=state.sessions.find(x=>x.id===id);
   const r=await api('/api/move',{id,to});
   if(r.error) return toast(r.error);
-  await api('/api/launch',{name:to,resume:id});
+  await api('/api/launch',{name:to,resume:id,dir:s?.dir});
   toast(`Transferred ${id.slice(0,8)} → ${to} · opened in Windows Terminal`);
 }
 async function refreshUsage(btn){
   btn.disabled=true; btn.textContent='Refreshing…';
-  try{ state=await api('/api/refresh',{}); renderBoard(); renderSessions(); stamp(); }
+  try{ state=await api('/api/refresh',{scope}); renderBoard(); renderSessions(); stamp(); }
   finally{ btn.disabled=false; btn.textContent='Refresh usage'; }
 }
 async function runDoctor(){
@@ -297,7 +322,7 @@ async function runDoctor(){
 function stamp(){ $('#updated').textContent='updated '+new Date().toTimeString().slice(0,5); $('#cwd').textContent=state.cwd; }
 
 async function load(){
-  state=await api('/api/state');
+  state=await api('/api/state?scope='+scope);
   renderBoard(); renderSessions(); stamp();
 }
 load();

@@ -84,4 +84,20 @@ test('renderSessions lists transcripts with sources', () => {
   assert.match(text, /abcd1234/);
   assert.match(text, /fix the login bug/);
   assert.match(text, /transfer/);
+  assert.match(text, /all folders/);
+});
+
+test('renderSessions all-folders scope shows the directory column', () => {
+  const state = {
+    scope: 'all',
+    sessions: [
+      { id: 'abcd1234-e5', mtime: Date.now() - 60000, title: 'ship the board', cwd: 'C:\\work\\api',
+        slug: 'C--work-api', source: { kind: 'profile', label: 'gasable', color: 'cyan' } },
+    ],
+    sel: 0, clock: '12:00:00', cwd: 'C:\\elsewhere',
+  };
+  const text = renderSessions(state, 110, 24).toText();
+  assert.match(text, /ALL FOLDERS/);
+  assert.match(text, /C:\\work\\api/);
+  assert.match(text, /this folder/);
 });

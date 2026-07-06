@@ -8,7 +8,8 @@ import { listProfiles } from '../registry.js';
 import { loadCache, refreshAll, headroom, ERROR_HINTS, DEFAULT_MAX_AGE_MS } from '../usage.js';
 import { isRunning, launchProfile } from '../launch.js';
 import { sortByHeadroom } from '../picker.js';
-import { slugForPath, allSessions, sessionTitle, copySessionTo } from '../sessions.js';
+import os from 'node:os';
+import { slugForPath, allSessions, sessionMeta, copySessionTo } from '../sessions.js';
 import { collectDoctor } from '../doctor.js';
 import { timeAgo, timeUntil } from '../util.js';
 
@@ -101,17 +102,26 @@ function drawKeybar(c, y, keys) {
   }
 }
 
+function shortDir(dir, max = 26) {
+  if (!dir) return '?';
+  const short = dir.replace(/\\+$/, '').startsWith(os.homedir()) ? '~' + dir.slice(os.homedir().length) : dir;
+  return short.length > max ? '…' + short.slice(-(max - 1)) : short;
+}
+
 export function renderSessions(state, w, h) {
   const c = new Canvas(w, h);
+  const all = state.scope === 'all';
   c.put(2, 0, 'DEPARTURES', S.amberB);
-  c.put(14, 0, state.cwd.toUpperCase(), S.muted);
+  c.put(14, 0, all ? 'ALL FOLDERS' : state.cwd.toUpperCase(), S.muted);
   c.put(w - 2 - state.clock.length, 0, state.clock, S.amberB);
   c.put(2, 1, '─'.repeat(w - 4), S.seam);
   const list = state.sessions ?? [];
   if (!list.length) {
-    c.put(4, 3, 'NO SESSIONS FOR THIS FOLDER', S.inkB);
-    c.put(4, 5, 'Sessions appear here once you have worked with Claude Code in this folder.', S.ink2);
+    c.put(4, 3, all ? 'NO SESSIONS ON ANY ACCOUNT' : 'NO SESSIONS FOR THIS FOLDER', S.inkB);
+    c.put(4, 5, all ? 'Sessions appear here once you have worked with Claude Code.'
+      : 'Press a to see every folder, or work with Claude Code here first.', S.ink2);
   }
+  const dirW = all ? 26 : 0;
   let y = 3;
   for (const [i, s] of list.entries()) {
     if (y > h - 3) break;
@@ -119,13 +129,14 @@ export function renderSessions(state, w, h) {
     c.put(2, y, selMark ? '▌' : ' ', S.amberB);
     c.put(4, y, s.source.kind === 'profile' ? '●' : '○', s.source.kind === 'profile' ? { fg: hueOf(s.source.color) } : S.muted);
     c.put(6, y, timeAgo(new Date(s.mtime).toISOString()).padEnd(11), S.ink2);
-    c.put(18, y, s.source.label.padEnd(11), S.muted);
-    c.put(30, y, s.id.slice(0, 8), selMark ? S.inkB : S.ink);
-    c.put(40, y, (s.title ?? '').slice(0, Math.max(0, w - 43)), selMark ? S.ink2 : S.muted);
+    if (all) c.put(18, y, shortDir(s.cwd ?? s.slug, dirW - 1).padEnd(dirW), selMark ? S.ink2 : S.seam);
+    c.put(18 + dirW, y, s.source.label.padEnd(11), S.muted);
+    c.put(30 + dirW, y, s.id.slice(0, 8), selMark ? S.inkB : S.ink);
+    c.put(40 + dirW, y, (s.title ?? '').slice(0, Math.max(0, w - 43 - dirW)), selMark ? S.ink2 : S.muted);
     y += 1;
   }
   c.put(2, h - 2, '─'.repeat(w - 4), S.seam);
-  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'resume'], ['m', 'transfer to another account'], ['esc', 'board']]);
+  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'resume'], ['m', 'transfer'], ['a', all ? 'this folder' : 'all folders'], ['esc', 'board']]);
   return c;
 }
 
@@ -193,6 +204,7 @@ class App {
     this.doctor = null;
     this.overlay = null;
     this.cwd = process.cwd();
+    this.scope = 'here';
     this.lastClock = '';
   }
 
@@ -236,15 +248,15 @@ class App {
   }
 
   loadSessions() {
-    this.sessions = allSessions(slugForPath(this.cwd)).slice(0, 40)
-      .map((s) => ({ ...s, title: sessionTitle(s.file) }));
+    this.sessions = allSessions(this.scope === 'all' ? null : slugForPath(this.cwd)).slice(0, 40)
+      .map((s) => ({ ...s, ...sessionMeta(s.file) }));
     this.sel = 0;
   }
 
-  launch(name, args = []) {
+  launch(name, args = [], opts = {}) {
     clearInterval(this.timer);
     this.screen.leave();
-    launchProfile(name, args);
+    launchProfile(name, args, opts);
     this.screen.enter();
     this.timer = setInterval(() => this.tick(), 100);
     this.msg = `SESSION ENDED ${this.clock().slice(0, 5)}`;
@@ -296,10 +308,16 @@ class App {
     if (k === 'esc' || k === 'q') { this.view = 'board'; this.sel = 0; return this.render(); }
     if (k === 'up' || k === 'k') return this.move(-1, this.sessions?.length ?? 0);
     if (k === 'down' || k === 'j') return this.move(1, this.sessions?.length ?? 0);
+    if (k === 'a') {
+      this.scope = this.scope === 'all' ? 'here' : 'all';
+      this.loadSessions();
+      this.cascade = new Cascade();
+      return this.render();
+    }
     const s = this.sessions?.[this.sel];
     if (!s) return;
     if (k === 'enter') {
-      if (s.source.kind === 'profile') return this.launch(s.source.label, ['--resume', s.id]);
+      if (s.source.kind === 'profile') return this.launch(s.source.label, ['--resume', s.id], { cwd: s.cwd });
       return this.openTransfer(s); // default-dir sessions board via a profile
     }
     if (k === 'm') return this.openTransfer(s);
@@ -328,9 +346,9 @@ class App {
     if (k === 'down' || k === 'j') { o.sel = (o.sel + 1) % o.targets.length; return this.render(); }
     if (k === 'enter') {
       const target = o.targets[o.sel].name;
-      copySessionTo(o.session, target, slugForPath(this.cwd));
+      copySessionTo(o.session, target, o.session.slug ?? slugForPath(this.cwd));
       this.overlay = null;
-      return this.launch(target, ['--resume', o.session.id]);
+      return this.launch(target, ['--resume', o.session.id], { cwd: o.session.cwd });
     }
   }
 
@@ -346,7 +364,7 @@ class App {
     const state = {
       profiles: this.profiles, cache: this.cache, sel: this.sel, clock: this.clock(),
       msg: this.msg, spin: this.spin, sessions: this.sessions, doctor: this.doctor,
-      cwd: this.cwd, overlay: this.overlay,
+      cwd: this.cwd, scope: this.scope, overlay: this.overlay,
     };
     const c = this.view === 'sessions' ? renderSessions(state, w, h)
       : this.view === 'doctor' ? renderDoctor(state, w, h)

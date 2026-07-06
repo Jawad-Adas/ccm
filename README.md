@@ -13,7 +13,10 @@ Terminal tabs.
 ```
 ccm                     pinned account here? launch it — otherwise the account board:
                         pick an account (sorted by headroom), jump to departures
-                        (sessions to resume/transfer), run doctor — all in one screen
+                        (sessions to resume/transfer — press a to switch between this
+                        folder and ALL folders, with each session's directory shown;
+                        resuming opens Claude Code in that session's own folder),
+                        run doctor — all in one screen
 ccm ui                  the same board in your browser (local only, 127.0.0.1)
 ccm work                launch Claude Code on the "work" account directly
 ccm work --resume       extra args pass straight through to claude

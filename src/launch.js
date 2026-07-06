@@ -23,7 +23,9 @@ export function isRunning(name) {
 }
 
 // Launch Claude Code bound to a profile. Blocks until the session exits.
-export function launchProfile(name, args = []) {
+// opts.cwd runs the session in another folder (resuming a session from a
+// different project must happen in that project's directory).
+export function launchProfile(name, args = [], opts = {}) {
   if (!getProfile(name)) throw new Error(`unknown profile "${name}" — run: ccm list`);
   const dir = profileDir(name);
   fs.mkdirSync(dir, { recursive: true });
@@ -35,9 +37,10 @@ export function launchProfile(name, args = []) {
 
   writeJson(lockPath(name), { pid: process.pid, startedAt: new Date().toISOString() });
   const env = { ...process.env, CLAUDE_CONFIG_DIR: dir };
-  let res = spawnSync('claude', args, { stdio: 'inherit', env });
+  const cwd = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : undefined;
+  let res = spawnSync('claude', args, { stdio: 'inherit', env, cwd });
   if (res.error?.code === 'ENOENT') {
-    res = spawnSync('claude', args, { stdio: 'inherit', env, shell: true });
+    res = spawnSync('claude', args, { stdio: 'inherit', env, cwd, shell: true });
   }
   try { fs.rmSync(lockPath(name)); } catch {}
   refreshIdentity(name);
