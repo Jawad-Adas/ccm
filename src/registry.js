@@ -46,7 +46,7 @@ export function getProfile(name) {
 const RESERVED = new Set([
   'add', 'import', 'list', 'ls', 'remove', 'rm', 'status', 'st', 'pick',
   'pin', 'unpin', 'statusline', 'refresh', 'help', 'version', 'doctor',
-  'mcp', 'wt', 'notify', 'override', 'move-session', 'sessions',
+  'mcp', 'wt', 'notify', 'override', 'move-session', 'sessions', 'ui', 'board',
 ]);
 
 export function registerProfile(name) {

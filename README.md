@@ -4,11 +4,20 @@ Unlimited named accounts for Claude Code. Launching is switching: every profile 
 isolated `CLAUDE_CONFIG_DIR`, so any number of accounts can run **at the same time**
 in different terminals — no swap step, no shared mutable state to corrupt.
 
+The interface is a **split-flap departure board** (think Solari airport board): your
+accounts are rows, quota windows are tile meters with amber reset clocks, and cells
+flip and settle when data changes. It ships twice — as a full-screen terminal app
+(`ccm`) and as a local web page (`ccm ui`) that launches accounts into Windows
+Terminal tabs.
+
 ```
-ccm                     pinned account here? launch it — otherwise interactive picker
-ccm work                launch Claude Code on the "work" account
+ccm                     pinned account here? launch it — otherwise the account board:
+                        pick an account (sorted by headroom), jump to departures
+                        (sessions to resume/transfer), run doctor — all in one screen
+ccm ui                  the same board in your browser (local only, 127.0.0.1)
+ccm work                launch Claude Code on the "work" account directly
 ccm work --resume       extra args pass straight through to claude
-ccm status              quota dashboard for every account
+ccm status              quota dashboard for every account (plain output)
 ```
 
 ## Install

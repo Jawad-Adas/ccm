@@ -71,36 +71,31 @@ function checkProfile(p) {
   return results;
 }
 
-export async function runDoctor() {
-  const lines = [];
-  let failures = 0;
-  const print = (label, r) => {
-    const icon = r.level === 'ok' ? colorize('green', '✔') : r.level === 'warn' ? colorize('yellow', '!') : colorize('red', '✖');
-    if (r.level === 'err') failures++;
-    lines.push(`${icon} ${label ? dim(label) + ' ' : ''}${r.msg}`);
-  };
+// Structured results: [{group, level, msg}] — group '' = system-wide.
+export async function collectDoctor() {
+  const entries = [];
+  const add = (group, r) => entries.push({ group, ...r });
 
   const version = claudeVersion();
-  print('', version ? ok(`claude on PATH (${version})`) : err('claude not found on PATH — install Claude Code'));
-  print('', fs.existsSync(CCM_HOME) ? ok(`ccm home: ${CCM_HOME}`) : err(`ccm home missing: ${CCM_HOME}`));
-  print('', readJson(CONFIG_PATH, null)?.profiles ? ok('registry parses') : warn('registry missing/corrupt — will be rebuilt from profile dirs'));
+  add('', version ? ok(`claude on PATH (${version})`) : err('claude not found on PATH — install Claude Code'));
+  add('', fs.existsSync(CCM_HOME) ? ok(`ccm home: ${CCM_HOME}`) : err(`ccm home missing: ${CCM_HOME}`));
+  add('', readJson(CONFIG_PATH, null)?.profiles ? ok('registry parses') : warn('registry missing/corrupt — will be rebuilt from profile dirs'));
 
   const sharedSettings = readJson(path.join(SHARED_DIR, 'settings.json'), null);
-  print('', sharedSettings?.statusLine?.command === 'ccm statusline'
+  add('', sharedSettings?.statusLine?.command === 'ccm statusline'
     ? ok('statusline integration installed')
     : warn('statusline not installed — run: ccm statusline install'));
 
   if (wtDetected()) {
-    print('', !wtInstalled() ? warn('Windows Terminal fragment not installed — run: ccm wt install')
+    add('', !wtInstalled() ? warn('Windows Terminal fragment not installed — run: ccm wt install')
       : wtInSync() ? ok('Windows Terminal fragment in sync')
       : warn('Windows Terminal fragment out of date — run: ccm wt install'));
   }
 
   const profiles = listProfiles();
-  if (!profiles.length) print('', warn('no profiles yet — run: ccm import <name>'));
+  if (!profiles.length) add('', warn('no profiles yet — run: ccm import <name>'));
   for (const p of profiles) {
-    lines.push(bold(p.name));
-    for (const r of checkProfile(p)) print(' ', r);
+    for (const r of checkProfile(p)) add(p.name, r);
   }
 
   const probe = profiles.find((p) => {
@@ -109,7 +104,7 @@ export async function runDoctor() {
   });
   if (probe) {
     const res = await fetchUsage(probe.name);
-    print('', res.windows ? ok('usage API reachable') : warn(`usage API: ${res.error}`));
+    add('', res.windows ? ok('usage API reachable') : warn(`usage API: ${res.error}`));
   }
 
   let orphans = [];
@@ -117,7 +112,21 @@ export async function runDoctor() {
     const known = new Set(profiles.map((p) => p.name));
     orphans = fs.readdirSync(PROFILES_DIR).filter((n) => !known.has(n));
   } catch {}
-  if (orphans.length) print('', warn(`unregistered profile dirs: ${orphans.join(', ')}`));
+  if (orphans.length) add('', warn(`unregistered profile dirs: ${orphans.join(', ')}`));
 
-  return { text: lines.join('\n'), failures };
+  const failures = entries.filter((e) => e.level === 'err').length;
+  return { entries, failures };
+}
+
+export async function runDoctor() {
+  const { entries, failures } = await collectDoctor();
+  const icon = { ok: colorize('green', '✔'), warn: colorize('yellow', '!'), err: colorize('red', '✖') };
+  const lines = [];
+  let lastGroup = '';
+  for (const e of entries) {
+    if (e.group && e.group !== lastGroup) lines.push(bold(e.group));
+    lastGroup = e.group;
+    lines.push(`${icon[e.level]} ${e.group ? dim(' ') : ''}${e.msg}`);
+  }
+  return { text: lines.join('\n'), failures, entries };
 }

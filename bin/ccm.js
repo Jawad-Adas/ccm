@@ -17,9 +17,10 @@ import { composeProfile } from '../src/compose.js';
 import { launchProfile, isRunning } from '../src/launch.js';
 import { findPin, writePin, removePin, PIN_FILE } from '../src/pin.js';
 import { gatherStatus, renderStatus } from '../src/status.js';
-import { refreshAll, loadCache, isFresh, bestAlternative, DEFAULT_MAX_AGE_MS } from '../src/usage.js';
+import { refreshAll, loadCache, bestAlternative } from '../src/usage.js';
 import { statuslineMain, installStatusline } from '../src/statusline.js';
-import { pickProfile } from '../src/picker.js';
+import { runTui } from '../src/tui/app.js';
+import { startUi } from '../src/ui/server.js';
 import { slugForPath, findSession, copySessionTo } from '../src/sessions.js';
 import { diffNotifications, notificationsEnabled, setNotificationsEnabled, sendToast } from '../src/notify.js';
 import { installWt, uninstallWt, wtDetected, wtInstalled, wtInSync, refreshWtIfInstalled } from '../src/wt.js';
@@ -48,12 +49,13 @@ function setupProfileDir(name) {
   return dir;
 }
 
-// Refresh usage for stale profiles, capped so the picker stays snappy.
-async function quickRefresh(maxWaitMs = 1200) {
-  const cache = loadCache();
-  const stale = listProfiles().map((p) => p.name).filter((n) => !isFresh(cache[n]));
-  if (!stale.length) return;
-  await Promise.race([refreshAll(stale), new Promise((r) => setTimeout(r, maxWaitMs))]);
+function uiCmd(args) {
+  const portIdx = args.indexOf('--port');
+  startUi({
+    port: portIdx > -1 ? Number(args[portIdx + 1]) || 7788 : 7788,
+    open: !args.includes('--no-open'),
+  });
+  return 0;
 }
 
 async function defaultAction() {
@@ -72,16 +74,12 @@ async function defaultAction() {
 }
 
 async function pickAndLaunch(profiles) {
-  if (!process.stdin.isTTY) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log(renderList(profiles));
     console.log(dim('\n(non-interactive terminal — run "ccm <name>" to launch)'));
     return 0;
   }
-  await quickRefresh();
-  const byLastUsed = [...profiles].sort((a, b) => (b.lastUsed ?? '').localeCompare(a.lastUsed ?? ''));
-  const name = await pickProfile(profiles, { preselect: byLastUsed[0]?.name });
-  if (!name) return 0;
-  return launchProfile(name, []);
+  return runTui();
 }
 
 async function moveSessionCmd(args) {
@@ -344,9 +342,11 @@ function help() {
   console.log(`${bold('ccm')} v${VERSION} — Claude Code account manager
 
 ${bold('Usage')}
-  ccm                     pinned account here? launch it — otherwise interactive picker
+  ccm                     pinned account here? launch it — otherwise the account board
+                          (full-screen split-flap TUI: pick, transfer, doctor)
   ccm <name> [args…]      launch Claude Code on that account (args pass through, e.g. --resume)
-  ccm pick                force the interactive picker (ignores pin)
+  ccm pick                open the account board (ignores pin)
+  ccm ui [--port N]       the board as a local web page (launch accounts into WT tabs)
 
 ${bold('Accounts')}
   ccm import [name]       adopt your current ~/.claude login as a profile, incl. session
@@ -400,6 +400,7 @@ try {
     case 'refresh': exitCode = await refreshCmd(); break;
     case 'pin': exitCode = pinCmd(rest); break;
     case 'unpin': exitCode = unpinCmd(); break;
+    case 'ui': case 'board': exitCode = uiCmd(rest); break;
     case 'move-session': exitCode = await moveSessionCmd(rest); break;
     case 'override': exitCode = overrideCmd(rest); break;
     case 'mcp': exitCode = await mcpCmd(rest); break;

@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ccm — account board</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231A1A19'/%3E%3Crect x='2' y='7' width='12' height='1' fill='%23000'/%3E%3Ctext x='8' y='12' font-size='10' font-family='monospace' fill='%23FAB219' text-anchor='middle'%3EC%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --board:#0D0D0D; --tile:#1A1A19; --tile-top:#232320; --tile-bot:#161614;
+    --seam:rgba(0,0,0,.55); --seam-hi:rgba(255,255,255,.05);
+    --hair:rgba(255,255,255,.08);
+    --ink:#F5F3EA; --ink2:#C3C2B7; --muted:#898781;
+    --amber:#FAB219; --good:#0CA30C; --crit:#D03B3B;
+    --mono:'Cascadia Mono','Cascadia Code',ui-monospace,Consolas,monospace;
+    --sans:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--board)}
+  body{
+    font-family:var(--sans); color:var(--ink2); min-height:100vh;
+    background:
+      radial-gradient(1200px 500px at 50% -10%, rgba(250,178,25,.05), transparent 60%),
+      var(--board);
+    padding:48px 24px 80px;
+  }
+  .wrap{max-width:1080px;margin:0 auto}
+
+  /* ── flap cells ─────────────────────────────────────────────── */
+  .cell{
+    position:relative; display:inline-flex; align-items:center; justify-content:center;
+    width:1.28em; height:1.72em; margin-right:.09em; border-radius:.13em;
+    background:linear-gradient(180deg,var(--tile-top) 0%,var(--tile) 47%,var(--tile-bot) 53%,var(--tile) 100%);
+    font-family:var(--mono); color:var(--ink); overflow:hidden;
+    box-shadow:0 1px 2px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.03);
+  }
+  .cell::after{
+    content:''; position:absolute; left:0; right:0; top:calc(50% - 1px); height:1px;
+    background:var(--seam); box-shadow:0 1px 0 var(--seam-hi);
+  }
+  .cell.tick{animation:flip .16s ease-in-out}
+  @keyframes flip{0%{transform:perspective(240px) rotateX(0)}50%{transform:perspective(240px) rotateX(-72deg)}100%{transform:perspective(240px) rotateX(0)}}
+  @media (prefers-reduced-motion: reduce){ .cell.tick{animation:none} }
+  .amber .cell{color:var(--amber)}
+
+  /* ── station header ─────────────────────────────────────────── */
+  header{display:flex; align-items:flex-end; gap:24px; flex-wrap:wrap; margin-bottom:14px}
+  .wordmark{font-size:34px; letter-spacing:0; white-space:nowrap}
+  .sub{font-family:var(--mono); color:var(--amber); letter-spacing:.42em; font-size:12px; padding-bottom:10px; flex:1; min-width:260px}
+  .clock{font-size:22px; padding-bottom:2px}
+  .rule{height:1px; background:var(--hair); margin:0 0 6px}
+
+  /* ── the board ──────────────────────────────────────────────── */
+  .row{
+    display:grid; grid-template-columns:18px 250px 1fr auto auto; gap:0 18px; align-items:center;
+    padding:20px 8px; border-bottom:1px solid var(--hair);
+  }
+  .row:focus-visible{outline:2px solid var(--amber); outline-offset:-2px; border-radius:6px}
+  .line{font-size:15px; line-height:1}
+  .who{display:flex; flex-direction:column; gap:5px; min-width:0}
+  .name{font-size:19px}
+  .mail{font-family:var(--mono); font-size:12.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .plan{font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.22em}
+  .meters{display:flex; flex-direction:column; gap:9px; min-width:0}
+  .meter{display:flex; align-items:center; gap:10px; font-family:var(--mono); font-size:12.5px}
+  .meter>label{color:var(--muted); width:6ch; letter-spacing:.1em; white-space:nowrap; overflow:hidden}
+  .tiles{display:flex; gap:2px}
+  .tile{width:15px; height:17px; border-radius:2.5px; background:linear-gradient(180deg,var(--tile-top),var(--tile-bot)); position:relative}
+  .tile::after{content:'';position:absolute;left:0;right:0;top:calc(50% - .5px);height:1px;background:var(--seam)}
+  .tile.on{background:linear-gradient(180deg,#FFFDF4,#DAD7C8)}
+  .tile.on.warn{background:linear-gradient(180deg,#FFC93E,#DE9A05)}
+  .tile.on.crit{background:linear-gradient(180deg,#E15656,#B32F2F)}
+  .pct{color:var(--ink2); width:4ch; text-align:right}
+  .resets{color:var(--amber); letter-spacing:.06em; white-space:nowrap}
+  .resets b{color:var(--muted); font-weight:400; margin-right:.6em; letter-spacing:.18em}
+  .nodata{font-family:var(--mono); font-size:12.5px; color:var(--muted)}
+  .chip{font-family:var(--mono); font-size:11px; letter-spacing:.14em; white-space:nowrap; justify-self:end}
+  .chip.good{color:var(--good)} .chip.warn{color:var(--amber)} .chip.crit{color:var(--crit)}
+  .board-btn{
+    font-family:var(--mono); font-size:12.5px; letter-spacing:.2em; cursor:pointer;
+    color:var(--amber); background:none; border:1px solid rgba(250,178,25,.45); border-radius:5px;
+    padding:9px 20px; transition:background .12s,color .12s;
+  }
+  .board-btn:hover{background:var(--amber); color:#141310}
+  .board-btn:focus-visible{outline:2px solid var(--amber); outline-offset:2px}
+
+  /* ── drawers ────────────────────────────────────────────────── */
+  section{margin-top:44px}
+  h2{font-family:var(--mono); font-size:12px; color:var(--amber); letter-spacing:.42em; font-weight:400; margin-bottom:4px}
+  .hint{font-size:12.5px; color:var(--muted); margin:6px 0 10px}
+  .srow{display:grid; grid-template-columns:96px 110px 90px 1fr auto; gap:14px; align-items:center; padding:11px 8px; border-bottom:1px solid var(--hair); font-size:13px}
+  .srow .t{font-family:var(--mono); color:var(--ink2)}
+  .srow .from{font-family:var(--mono); color:var(--muted)}
+  .srow .id{font-family:var(--mono); color:var(--ink)}
+  .srow .title{color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .srow .act{display:flex; gap:8px; align-items:center}
+  select{
+    font-family:var(--mono); font-size:12px; color:var(--ink2); background:var(--tile);
+    border:1px solid var(--hair); border-radius:5px; padding:6px 8px;
+  }
+  .mini{padding:6px 14px; font-size:11.5px}
+  .drow{display:flex; gap:10px; align-items:baseline; padding:6px 8px; font-size:13px}
+  .drow .lamp{font-family:var(--mono); width:1.2em}
+  .lamp.ok{color:var(--good)} .lamp.warn{color:var(--amber)} .lamp.err{color:var(--crit)}
+  .dgroup{font-family:var(--mono); color:var(--ink); letter-spacing:.14em; margin-top:10px; padding:4px 8px; font-size:12px}
+  footer{margin-top:52px; display:flex; gap:18px; align-items:center; font-family:var(--mono); font-size:11.5px; color:var(--muted)}
+  footer .cwd{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  #toast{
+    position:fixed; left:50%; bottom:28px; transform:translate(-50%,80px); transition:transform .25s;
+    background:var(--tile); color:var(--ink); border:1px solid var(--hair); border-radius:8px;
+    padding:12px 22px; font-family:var(--mono); font-size:13px; box-shadow:0 8px 30px rgba(0,0,0,.6);
+    visibility:hidden;
+  }
+  #toast.show{transform:translate(-50%,0); visibility:visible}
+  .empty{padding:26px 8px; color:var(--muted); font-size:13.5px}
+  .empty code{font-family:var(--mono); color:var(--ink2); background:var(--tile); padding:2px 8px; border-radius:4px}
+
+  @media (max-width:860px){
+    .row{grid-template-columns:18px 1fr auto; grid-template-rows:auto auto}
+    .meters{grid-column:2/4; grid-row:2; margin-top:12px}
+    .chip{display:none}
+    .srow{grid-template-columns:80px 90px 1fr; grid-template-rows:auto auto}
+    .srow .title{grid-column:1/4}
+    .srow .act{grid-column:1/4; justify-content:flex-end}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="wordmark" id="wordmark" aria-label="ccm"></div>
+    <div class="sub">CLAUDE&nbsp;CODE&nbsp;ACCOUNT&nbsp;BOARD</div>
+    <div class="clock amber" id="clock" aria-hidden="true"></div>
+  </header>
+  <div class="rule"></div>
+  <main id="board" aria-live="polite"></main>
+
+  <section>
+    <h2>TRANSFERS</h2>
+    <p class="hint">Sessions for the folder the board was opened from. Resume one where it lives, or transfer it to another account and continue there — the original stays put.</p>
+    <div id="sessions"></div>
+  </section>
+
+  <section>
+    <h2>DOCTOR</h2>
+    <p class="hint">Health checks for profiles, tokens, junctions and integrations.</p>
+    <div id="doctor"><button class="board-btn mini" onclick="runDoctor()">Run checks</button></div>
+  </section>
+
+  <footer>
+    <span class="cwd" id="cwd"></span>
+    <span id="updated"></span>
+    <button class="board-btn mini" onclick="refreshUsage(this)">Refresh usage</button>
+  </footer>
+</div>
+<div id="toast" role="status"></div>
+
+<script>
+const FLAP='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:·%';
+const REDUCED=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $=(s,el=document)=>el.querySelector(s);
+
+// ── split-flap text: a run of cells that scramble & settle ─────────────
+function flapSet(el, text, cascade=true){
+  const chars=[...String(text)];
+  while(el.children.length>chars.length) el.lastChild.remove();
+  while(el.children.length<chars.length){
+    const c=document.createElement('span'); c.className='cell'; c.textContent=' '; el.append(c);
+  }
+  chars.forEach((ch,i)=>{
+    const cell=el.children[i];
+    if(cell.textContent===ch) return;
+    if(REDUCED || !cascade){ cell.textContent=ch; return; }
+    const spins=2+((Math.random()*3)|0);
+    let n=0;
+    cell.classList.remove('tick'); void cell.offsetWidth; cell.classList.add('tick');
+    const iv=setInterval(()=>{
+      cell.textContent = ++n>spins ? ch : FLAP[(Math.random()*FLAP.length)|0];
+      if(n>spins) clearInterval(iv);
+    }, 55+i*8);
+  });
+}
+
+flapSet($('#wordmark'),'CCM',true);
+function tickClock(){ flapSet($('#clock'), new Date().toTimeString().slice(0,8), false); }
+tickClock(); setInterval(tickClock,1000);
+
+// ── board rows ─────────────────────────────────────────────────────────
+let state=null;
+function meterHtml(w){
+  if(!w) return '';
+  const on=Math.round(w.percent/10), cls=w.percent>=95?'crit':w.percent>=80?'warn':'';
+  const tiles=Array.from({length:10},(_,i)=>`<span class="tile ${i<on?'on '+cls:''}"></span>`).join('');
+  const label=w.label.startsWith('session')?'5H':w.label==='week (all models)'?'WK':w.label.replace(/^week \((.+)\)$/,'$1').toUpperCase().slice(0,6);
+  return `<div class="meter"><label>${label}</label><span class="tiles">${tiles}</span>`+
+         `<span class="pct">${Math.round(w.percent)}%</span>`+
+         `<span class="resets"><b>RESETS</b>${until(w.resetsAt)}</span></div>`;
+}
+function until(iso){
+  if(!iso) return '—';
+  const m=Math.max(0,Math.floor((new Date(iso)-Date.now())/60000));
+  const d=Math.floor(m/1440), h=Math.floor(m%1440/60), mm=m%60;
+  return d?`${d}D ${h}H`:h?`${h}H ${String(mm).padStart(2,'0')}M`:`${mm}M`;
+}
+function ago(t){
+  const m=Math.floor((Date.now()-t)/60000);
+  if(m<1) return 'just now';
+  if(m<60) return m+'m ago';
+  if(m<1440) return Math.floor(m/60)+'h ago';
+  return Math.floor(m/1440)+'d ago';
+}
+function chip(p){
+  if(p.running) return '<span class="chip good">● IN SESSION</span>';
+  const worst=Math.max(0,...(p.windows??[]).map(w=>w.percent));
+  if(worst>=95) return '<span class="chip crit">■ FULL</span>';
+  if(worst>=80) return '<span class="chip warn">▲ ALMOST FULL</span>';
+  if(state && p.name===state.best) return '<span class="chip good">✦ MOST HEADROOM</span>';
+  return '<span class="chip"></span>';
+}
+function renderBoard(){
+  const el=$('#board');
+  if(!state.profiles.length){
+    el.innerHTML=`<div class="empty">No accounts on the board yet. In a terminal: <code>ccm import work</code> to adopt your current login, <code>ccm add personal</code> for a second account.</div>`;
+    return;
+  }
+  state.best=state.profiles[0]?.headroom!=null?state.profiles[0].name:null;
+  el.innerHTML=state.profiles.map(p=>`
+    <div class="row" tabindex="0" data-name="${p.name}">
+      <span class="line" style="color:${p.hue}">●</span>
+      <div class="who">
+        <span class="name flapname" data-text="${p.name.toUpperCase()}"></span>
+        <span class="mail">${p.email??'not logged in'}</span>
+        ${p.plan?`<span class="plan">${p.plan.toUpperCase()}${p.organization&&!/'s organization$/i.test(p.organization)?' · '+p.organization.toUpperCase().slice(0,24):''}</span>`:''}
+      </div>
+      <div class="meters">${
+        p.windows ? p.windows.slice(0,3).map(meterHtml).join('')
+        : `<span class="nodata">${p.usageError==='token-expired'?'token expired — launch once to refresh':'no usage data yet'}</span>`
+      }</div>
+      ${chip(p)}
+      <button class="board-btn" onclick="board('${p.name}')" title="Open a Windows Terminal tab on this account">Board</button>
+    </div>`).join('');
+  el.querySelectorAll('.flapname').forEach(n=>flapSet(n,n.dataset.text));
+  el.querySelectorAll('.row').forEach(r=>r.addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&e.target===r) board(r.dataset.name);
+  }));
+}
+function renderSessions(){
+  const el=$('#sessions');
+  if(!state.sessions.length){
+    el.innerHTML='<div class="empty">No sessions for this folder yet — they appear once you work with Claude Code here.</div>';
+    return;
+  }
+  el.innerHTML=state.sessions.map(s=>{
+    const targets=state.profiles.filter(p=>!(s.source.kind==='profile'&&p.name===s.source.label));
+    return `<div class="srow">
+      <span class="t">${ago(s.mtime)}</span>
+      <span class="from"><span style="color:${s.source.hue??'var(--muted)'}">${s.source.kind==='profile'?'●':'○'}</span> ${s.source.label}</span>
+      <span class="id">${s.id.slice(0,8)}</span>
+      <span class="title">${(s.title??'').replace(/</g,'&lt;')}</span>
+      <span class="act">
+        <select id="sel-${s.id.slice(0,8)}">${targets.map(t=>`<option>${t.name}</option>`).join('')}</select>
+        <button class="board-btn mini" onclick="transfer('${s.id}')">Transfer &amp; resume</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+
+// ── actions ────────────────────────────────────────────────────────────
+async function api(p,body){ const r=await fetch(p,body?{method:'POST',body:JSON.stringify(body)}:{}); return r.json(); }
+function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),3200); }
+async function board(name){ const r=await api('/api/launch',{name}); toast(r.error??`Opened ${name} in Windows Terminal`); }
+async function transfer(id){
+  const to=$('#sel-'+id.slice(0,8)).value;
+  const r=await api('/api/move',{id,to});
+  if(r.error) return toast(r.error);
+  await api('/api/launch',{name:to,resume:id});
+  toast(`Transferred ${id.slice(0,8)} → ${to} · opened in Windows Terminal`);
+}
+async function refreshUsage(btn){
+  btn.disabled=true; btn.textContent='Refreshing…';
+  try{ state=await api('/api/refresh',{}); renderBoard(); renderSessions(); stamp(); }
+  finally{ btn.disabled=false; btn.textContent='Refresh usage'; }
+}
+async function runDoctor(){
+  $('#doctor').innerHTML='<div class="empty">Running checks…</div>';
+  const d=await api('/api/doctor');
+  const lamp={ok:['●','ok'],warn:['▲','warn'],err:['■','err']};
+  let last=''; let html='';
+  for(const e of d.entries){
+    if(e.group&&e.group!==last) html+=`<div class="dgroup">${e.group.toUpperCase()}</div>`;
+    last=e.group;
+    const [g,c]=lamp[e.level];
+    html+=`<div class="drow"><span class="lamp ${c}">${g}</span><span>${e.msg.replace(/</g,'&lt;')}</span></div>`;
+  }
+  $('#doctor').innerHTML=html+`<div style="margin-top:12px"><button class="board-btn mini" onclick="runDoctor()">Run again</button></div>`;
+}
+function stamp(){ $('#updated').textContent='updated '+new Date().toTimeString().slice(0,5); $('#cwd').textContent=state.cwd; }
+
+async function load(){
+  state=await api('/api/state');
+  renderBoard(); renderSessions(); stamp();
+}
+load();
+setInterval(load, 20000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) load(); });
+</script>
+</body>
+</html>
