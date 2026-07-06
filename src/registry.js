@@ -42,8 +42,16 @@ export function getProfile(name) {
   return loadConfig().profiles[name] ?? null;
 }
 
+// Command words can never be profile names — the CLI dispatches commands first.
+const RESERVED = new Set([
+  'add', 'import', 'list', 'ls', 'remove', 'rm', 'status', 'st', 'pick',
+  'pin', 'unpin', 'statusline', 'refresh', 'help', 'version', 'doctor',
+  'mcp', 'wt', 'notify', 'override', 'move-session', 'sessions',
+]);
+
 export function registerProfile(name) {
   if (!validName(name)) throw new Error(`invalid profile name "${name}" (use letters, digits, - or _)`);
+  if (RESERVED.has(name)) throw new Error(`"${name}" is a ccm command — pick another profile name`);
   const cfg = loadConfig();
   if (cfg.profiles[name]) throw new Error(`profile "${name}" already exists`);
   const used = new Set(Object.values(cfg.profiles).map((p) => p.color));

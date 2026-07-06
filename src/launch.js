@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { profileDir } from './paths.js';
 import { readJson, writeJson, colorize } from './util.js';
 import { getProfile, updateProfile, refreshIdentity } from './registry.js';
-import { ensureShared, linkIntoProfile, syncFilesIntoProfile } from './shared.js';
+import { ensureShared, linkIntoProfile } from './shared.js';
+import { composeProfile } from './compose.js';
 
 function lockPath(name) {
   return path.join(profileDir(name), 'ccm.lock');
@@ -27,8 +28,9 @@ export function launchProfile(name, args = []) {
   const dir = profileDir(name);
   fs.mkdirSync(dir, { recursive: true });
   ensureShared();
-  for (const w of linkIntoProfile(dir)) console.error(colorize('yellow', `warn: ${w}`));
-  syncFilesIntoProfile(dir);
+  for (const w of [...linkIntoProfile(dir), ...composeProfile(name, dir)]) {
+    console.error(colorize('yellow', `warn: ${w}`));
+  }
   updateProfile(name, { lastUsed: new Date().toISOString() });
 
   writeJson(lockPath(name), { pid: process.pid, startedAt: new Date().toISOString() });

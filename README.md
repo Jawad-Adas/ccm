@@ -42,8 +42,14 @@ Your `~/.claude` and the plain `claude` command are never touched — `ccm` is p
 | `ccm list` | Profiles at a glance (email, plan, running/last-used) |
 | `ccm remove <name>` | Delete a profile (confirms; refuses if running) |
 | `ccm status [--fresh\|--json]` | Usage bars, reset times, severity for every account |
+| `ccm move-session <to> [id]` | Copy the latest session for this folder (or a given id) to another account and resume it there — the original stays put (`--no-launch` to skip launching) |
+| `ccm override <name> [key=value…]` | Per-profile settings merged over the shared layer at launch (e.g. `model=opus theme=dark env.FOO=1`); `--unset key`, `--clear`. `~/.ccm/overrides/<name>.CLAUDE.md` is appended to the shared CLAUDE.md the same way |
+| `ccm mcp list / share <name> / unshare <name>` | Shared MCP servers are injected into every profile; servers a profile adds itself always win and are never touched |
+| `ccm doctor` | Health check: claude binary, tokens, junctions (auto-repairs), stale locks, integrations |
+| `ccm notify on\|off\|test` | Windows toasts on crossing 80%/95% of any limit and when a limit resets ("fresh again") |
+| `ccm wt install` | One Windows Terminal profile per account with colored tabs (via WT fragments; auto-synced on add/remove) |
 | `ccm pin <name>` / `ccm unpin` | This folder (and subfolders) always uses that account |
-| `ccm statusline install` | Show `● work · 5h 43% · wk 12%` inside Claude Code's statusline |
+| `ccm statusline install` | Show `● work · 5h 43% · wk 12%` inside Claude Code's statusline — and a `→ ccm move-session <best>` hint when you near a limit and another account has headroom |
 
 ## How it works
 
@@ -56,8 +62,12 @@ Your `~/.claude` and the plain `claude` command are never touched — `ccm` is p
 ```
 
 - **Shared config**: directories are junction-linked into every profile (no admin needed
-  on Windows); `settings.json` / `CLAUDE.md` are copied in on each launch when the shared
-  copy is newer. Configure once in `~/.ccm/shared`, all accounts see it.
+  on Windows); `settings.json` / `CLAUDE.md` / MCP servers are *composed* into each
+  profile at launch: shared base + per-profile overrides from `~/.ccm/overrides/`.
+  A newer-mtime rule means changes made inside a session (`/config`) survive until the
+  shared or override sources actually change. Configure once, override per account.
+- **Quota-aware picker**: accounts are listed most-headroom-first with a ✦ marker, so
+  picking the account with room is the default gesture — switching stays your choice.
 - **Quota data** comes from the same undocumented OAuth usage endpoint Claude Code's own
   `/usage` uses. If Anthropic changes it, only the quota columns degrade.
 - **Pinning**: `ccm pin work` writes a `.ccmrc` file; `ccm` walks up from the current

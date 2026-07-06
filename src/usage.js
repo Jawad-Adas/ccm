@@ -102,6 +102,24 @@ export async function refreshAll(names, maxAgeMs = 0) {
   await Promise.all(names.map((n) => getUsage(n, { maxAgeMs }).catch(() => null)));
 }
 
+// Remaining room on the account's tightest limit: 100 - max(percent), or null.
+export function headroom(entry) {
+  if (!entry?.windows?.length) return null;
+  return 100 - Math.max(...entry.windows.map((w) => w.percent));
+}
+
+// The other profile with the most headroom (from cache) — used to recommend
+// where to move a session when the current account nears its limit.
+export function bestAlternative(currentName, profileNames, cache = loadCache()) {
+  let best = null;
+  for (const name of profileNames) {
+    if (name === currentName) continue;
+    const h = headroom(cache[name]);
+    if (h != null && (!best || h > best.headroom)) best = { name, headroom: h };
+  }
+  return best;
+}
+
 export const ERROR_HINTS = {
   'no-credentials': 'not logged in — launch this profile and run /login',
   'token-expired': 'token expired — launch this profile once to refresh it',

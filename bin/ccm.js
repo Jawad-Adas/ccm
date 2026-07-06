@@ -3,19 +3,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { profileDir, DEFAULT_CLAUDE_DIR, HOME_CLAUDE_JSON } from '../src/paths.js';
-import { colorize, bold, dim, timeAgo, readJson } from '../src/util.js';
+import {
+  profileDir, DEFAULT_CLAUDE_DIR, HOME_CLAUDE_JSON,
+  overrideSettingsPath, overrideClaudeMdPath,
+} from '../src/paths.js';
+import { colorize, bold, dim, timeAgo, readJson, writeJson, setDotted, unsetDotted } from '../src/util.js';
 import {
   listProfiles, getProfile, registerProfile, unregisterProfile,
   refreshIdentity, validName,
 } from '../src/registry.js';
-import { ensureShared, linkIntoProfile, syncFilesIntoProfile, unlinkShared } from '../src/shared.js';
+import { ensureShared, linkIntoProfile, unlinkShared } from '../src/shared.js';
+import { composeProfile } from '../src/compose.js';
 import { launchProfile, isRunning } from '../src/launch.js';
 import { findPin, writePin, removePin, PIN_FILE } from '../src/pin.js';
 import { gatherStatus, renderStatus } from '../src/status.js';
-import { refreshAll } from '../src/usage.js';
+import { refreshAll, loadCache, isFresh, bestAlternative, DEFAULT_MAX_AGE_MS } from '../src/usage.js';
 import { statuslineMain, installStatusline } from '../src/statusline.js';
 import { pickProfile } from '../src/picker.js';
+import { slugForPath, findSession, copySessionTo } from '../src/sessions.js';
+import { diffNotifications, notificationsEnabled, setNotificationsEnabled, sendToast } from '../src/notify.js';
+import { installWt, uninstallWt, wtDetected, wtInstalled, wtInSync, refreshWtIfInstalled } from '../src/wt.js';
+import { runDoctor } from '../src/doctor.js';
+import { mcpList, mcpShare, mcpUnshare } from '../src/mcp.js';
 
 const VERSION = readJson(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), {}).version ?? '?';
 
@@ -33,9 +42,18 @@ function setupProfileDir(name) {
   const dir = profileDir(name);
   fs.mkdirSync(dir, { recursive: true });
   ensureShared();
-  for (const w of linkIntoProfile(dir)) console.error(colorize('yellow', `warn: ${w}`));
-  syncFilesIntoProfile(dir);
+  for (const w of [...linkIntoProfile(dir), ...composeProfile(name, dir)]) {
+    console.error(colorize('yellow', `warn: ${w}`));
+  }
   return dir;
+}
+
+// Refresh usage for stale profiles, capped so the picker stays snappy.
+async function quickRefresh(maxWaitMs = 1200) {
+  const cache = loadCache();
+  const stale = listProfiles().map((p) => p.name).filter((n) => !isFresh(cache[n]));
+  if (!stale.length) return;
+  await Promise.race([refreshAll(stale), new Promise((r) => setTimeout(r, maxWaitMs))]);
 }
 
 async function defaultAction() {
@@ -59,10 +77,153 @@ async function pickAndLaunch(profiles) {
     console.log(dim('\n(non-interactive terminal — run "ccm <name>" to launch)'));
     return 0;
   }
+  await quickRefresh();
   const byLastUsed = [...profiles].sort((a, b) => (b.lastUsed ?? '').localeCompare(a.lastUsed ?? ''));
   const name = await pickProfile(profiles, { preselect: byLastUsed[0]?.name });
   if (!name) return 0;
   return launchProfile(name, []);
+}
+
+async function moveSessionCmd(args) {
+  const positional = args.filter((a) => !a.startsWith('--'));
+  const to = positional[0];
+  const id = positional[1] ?? null;
+  const noLaunch = args.includes('--no-launch');
+  if (!to) fail('usage: ccm move-session <to-profile> [session-id] [--no-launch]');
+  if (!getProfile(to)) fail(`unknown profile "${to}" — run: ccm list`);
+  const slug = slugForPath(process.cwd());
+  const found = findSession(slug, id, to);
+  if (!found) {
+    fail(`no session found for this folder${id ? ` with id ${id}` : ''} — run this from the project folder you were working in`);
+  }
+  const { artifacts } = copySessionTo(found, to, slug);
+  console.log(`${colorize('green', '✔')} session ${bold(found.id.slice(0, 8))} (${timeAgo(new Date(found.mtime).toISOString())}, from ${found.source.label}) → ${bold(to)}${artifacts ? dim(`  +${artifacts} artifact(s)`) : ''}`);
+  console.log(dim('The original stays on the source account.'));
+  if (!noLaunch && process.stdin.isTTY) {
+    console.log(dim(`launching: ccm ${to} --resume ${found.id.slice(0, 8)}…`));
+    return launchProfile(to, ['--resume', found.id]);
+  }
+  console.log(`continue with: ${bold(`ccm ${to} --resume ${found.id}`)}`);
+  return 0;
+}
+
+function overrideCmd(args) {
+  const name = args[0];
+  if (!name || name.startsWith('--')) fail('usage: ccm override <profile> [key=value ...] [--unset key] [--clear]');
+  if (!getProfile(name)) fail(`unknown profile "${name}" — run: ccm list`);
+  const file = overrideSettingsPath(name);
+  const rest = args.slice(1);
+  if (!rest.length) {
+    const cur = readJson(file, null);
+    console.log(`${bold(name)} settings override ${dim(`(${file})`)}`);
+    console.log(cur ? JSON.stringify(cur, null, 2) : dim('  (none — set with: ccm override ' + name + ' key=value)'));
+    const md = overrideClaudeMdPath(name);
+    console.log(`CLAUDE.md fragment ${dim(`(${md})`)}: ${fs.existsSync(md) ? colorize('green', 'present — appended to shared CLAUDE.md') : dim('none — create the file to add profile-specific memory')}`);
+    return 0;
+  }
+  let cfg = readJson(file, {}) ?? {};
+  if (rest.includes('--clear')) cfg = {};
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--clear') continue;
+    if (a === '--unset') {
+      const key = rest[++i];
+      if (!key) fail('--unset needs a key');
+      unsetDotted(cfg, key);
+      continue;
+    }
+    const eq = a.indexOf('=');
+    if (eq < 1) fail(`expected key=value, got "${a}"`);
+    const key = a.slice(0, eq);
+    const raw = a.slice(eq + 1);
+    let value;
+    try { value = JSON.parse(raw); } catch { value = raw; }
+    setDotted(cfg, key, value);
+  }
+  writeJson(file, cfg);
+  console.log(`${colorize('green', '✔')} ${file}`);
+  console.log(dim(`Applied on the next launch of ${name} (merged over shared settings).`));
+  return 0;
+}
+
+async function refreshCmd() {
+  const prev = loadCache();
+  await refreshAll(listProfiles().map((p) => p.name));
+  if (!notificationsEnabled()) return 0;
+  const events = diffNotifications(prev, loadCache()).slice(0, 3);
+  for (const ev of events) {
+    const profile = getProfile(ev.profile);
+    if (ev.kind === 'fresh') {
+      sendToast(`Claude — ${ev.profile}`, 'Quota reset — this account is fresh again.');
+      continue;
+    }
+    const lines = ev.windows.map((w) => `${w.label}: ${w.percent}%`).join(', ');
+    let tip = '';
+    if (ev.windows.some((w) => w.bucket === 2)) {
+      const alt = bestAlternative(ev.profile, listProfiles().map((p) => p.name));
+      if (alt && alt.headroom >= 30) tip = ` — continue elsewhere: ccm move-session ${alt.name}`;
+    }
+    sendToast(`Claude — ${ev.profile}${profile?.email ? ` (${profile.email})` : ''}`, `${lines}${tip}`);
+  }
+  return 0;
+}
+
+function notifyCmd(args) {
+  const sub = args[0] ?? 'status';
+  if (sub === 'on' || sub === 'off') {
+    setNotificationsEnabled(sub === 'on');
+    console.log(`${colorize('green', '✔')} quota notifications ${sub}`);
+  } else if (sub === 'test') {
+    sendToast('ccm — test', 'Notifications are working. You would see quota warnings like: session (5h): 95%');
+    console.log('test toast sent');
+  } else {
+    console.log(`quota notifications: ${notificationsEnabled() ? colorize('green', 'on') : colorize('yellow', 'off')} ${dim('(ccm notify on|off|test)')}`);
+    console.log(dim('Fires on crossing 80% and 95%, and when a limit resets. Checks run whenever usage is refreshed (statusline keeps this fresh while sessions are open).'));
+  }
+  return 0;
+}
+
+function wtCmd(args) {
+  const sub = args[0] ?? 'status';
+  if (sub === 'install') {
+    if (!wtDetected()) console.log(colorize('yellow', 'warn: Windows Terminal not detected — writing the fragment anyway'));
+    const file = installWt();
+    console.log(`${colorize('green', '✔')} ${file}`);
+    console.log(dim('Profiles appear in Windows Terminal\'s dropdown after you restart it. Kept in sync automatically on ccm add/remove.'));
+  } else if (sub === 'uninstall') {
+    console.log(uninstallWt() ? `${colorize('green', '✔')} fragment removed` : 'nothing installed');
+  } else {
+    console.log(!wtInstalled() ? 'not installed — run: ccm wt install'
+      : wtInSync() ? colorize('green', 'installed and in sync')
+      : colorize('yellow', 'installed but out of date — run: ccm wt install'));
+  }
+  return 0;
+}
+
+async function mcpCmd(args) {
+  const sub = args[0];
+  if (sub === 'list' || !sub) {
+    console.log(mcpList());
+    return 0;
+  }
+  if (sub === 'share') {
+    const name = args[1];
+    if (!name) fail('usage: ccm mcp share <server-name> [--from <profile>]');
+    const fromIdx = args.indexOf('--from');
+    const res = mcpShare(name, fromIdx > -1 ? args[fromIdx + 1] : null);
+    if (res.error) fail(res.error);
+    console.log(`${colorize('green', '✔')} "${name}" (from ${res.from}) is now shared — injected into every profile on its next launch`);
+    return 0;
+  }
+  if (sub === 'unshare') {
+    const name = args[1];
+    if (!name) fail('usage: ccm mcp unshare <server-name>');
+    const res = mcpUnshare(name);
+    if (res.error) fail(res.error);
+    console.log(`${colorize('green', '✔')} "${name}" unshared — removed from profiles on their next launch`);
+    return 0;
+  }
+  fail('usage: ccm mcp [list | share <name> [--from <profile>] | unshare <name>]');
 }
 
 function renderNoProfiles() {
@@ -194,18 +355,34 @@ ${bold('Accounts')}
   ccm list                all profiles at a glance
   ccm remove <name>       delete a profile (asks first; --yes to skip)
 
+${bold('Sessions')}
+  ccm move-session <to> [id] [--no-launch]
+                          copy the latest session for this folder (or a given id)
+                          to another account and resume it there
+
 ${bold('Insight')}
   ccm status [--fresh]    quota dashboard for every account (--json for raw data)
   ccm statusline install  show active account + quota inside Claude Code's statusline
+  ccm notify on|off|test  Windows toasts when an account crosses 80%/95% or resets
+  ccm doctor              health-check profiles, junctions, tokens, integrations
 
-${bold('Pinning')}
+${bold('Per-profile config')} ${dim('(merged over the shared layer at launch)')}
+  ccm override <name> [key=value ...] [--unset key] [--clear]
+                          settings overrides, e.g. ccm override work model=opus theme=dark
+                          ~/.ccm/overrides/<name>.CLAUDE.md is appended to shared CLAUDE.md
+  ccm mcp list            shared vs per-profile MCP servers
+  ccm mcp share <name> [--from <profile>] / unshare <name>
+
+${bold('Pinning & Windows Terminal')}
   ccm pin <name>          this folder (and below) always uses that account
   ccm unpin               remove the pin in this folder
+  ccm wt install          one Windows Terminal profile per account (colored tabs)
 
 Profiles live in ~/.ccm/profiles/<name> — each is an isolated CLAUDE_CONFIG_DIR,
 so different accounts can run at the same time in different terminals.
-Shared config (settings.json, agents, skills, commands, hooks, CLAUDE.md) is
-managed once in ~/.ccm/shared and linked/synced into every profile.`);
+Shared config (settings.json, CLAUDE.md, mcp.json, agents, skills, commands,
+hooks) is managed once in ~/.ccm/shared and composed into every profile,
+with per-profile overrides from ~/.ccm/overrides.`);
   return 0;
 }
 
@@ -215,14 +392,25 @@ try {
   switch (cmd) {
     case undefined: exitCode = await defaultAction(); break;
     case 'pick': exitCode = await pickAndLaunch(listProfiles()); break;
-    case 'add': exitCode = await addCmd(rest); break;
-    case 'import': exitCode = await importCmd(rest); break;
+    case 'add': exitCode = await addCmd(rest); refreshWtIfInstalled(); break;
+    case 'import': exitCode = await importCmd(rest); refreshWtIfInstalled(); break;
     case 'list': case 'ls': console.log(renderList(listProfiles())); break;
-    case 'remove': case 'rm': exitCode = await removeCmd(rest); break;
+    case 'remove': case 'rm': exitCode = await removeCmd(rest); refreshWtIfInstalled(); break;
     case 'status': case 'st': exitCode = await statusCmd(rest); break;
-    case 'refresh': await refreshAll(listProfiles().map((p) => p.name)); break;
+    case 'refresh': exitCode = await refreshCmd(); break;
     case 'pin': exitCode = pinCmd(rest); break;
     case 'unpin': exitCode = unpinCmd(); break;
+    case 'move-session': exitCode = await moveSessionCmd(rest); break;
+    case 'override': exitCode = overrideCmd(rest); break;
+    case 'mcp': exitCode = await mcpCmd(rest); break;
+    case 'wt': exitCode = wtCmd(rest); break;
+    case 'notify': exitCode = notifyCmd(rest); break;
+    case 'doctor': {
+      const { text, failures } = await runDoctor();
+      console.log(text);
+      exitCode = failures ? 1 : 0;
+      break;
+    }
     case 'statusline':
       if (rest[0] === 'install') {
         const file = installStatusline();

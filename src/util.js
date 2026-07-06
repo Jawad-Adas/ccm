@@ -58,6 +58,41 @@ export function timeUntil(iso, now = Date.now()) {
   return `${m}m`;
 }
 
+// Plain objects merge recursively; arrays and scalars replace.
+export function deepMerge(base, override) {
+  if (override === undefined) return base;
+  const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  if (isObj(base) && isObj(override)) {
+    const out = { ...base };
+    for (const [k, v] of Object.entries(override)) out[k] = deepMerge(base[k], v);
+    return out;
+  }
+  return override;
+}
+
+// set/unset a dotted path like "env.FOO" on a plain object
+export function setDotted(obj, dotted, value) {
+  const keys = dotted.split('.');
+  let cur = obj;
+  for (const k of keys.slice(0, -1)) {
+    if (!cur[k] || typeof cur[k] !== 'object') cur[k] = {};
+    cur = cur[k];
+  }
+  cur[keys.at(-1)] = value;
+  return obj;
+}
+
+export function unsetDotted(obj, dotted) {
+  const keys = dotted.split('.');
+  let cur = obj;
+  for (const k of keys.slice(0, -1)) {
+    if (!cur?.[k] || typeof cur[k] !== 'object') return obj;
+    cur = cur[k];
+  }
+  delete cur[keys.at(-1)];
+  return obj;
+}
+
 // "how long ago" for a past ISO timestamp: "5m ago", "3h ago", "2d ago", "—"
 export function timeAgo(iso, now = Date.now()) {
   if (!iso) return '—';

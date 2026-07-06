@@ -2,8 +2,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { PROFILES_DIR, SHARED_DIR } from './paths.js';
 import { readJson, writeJson, colorize, dim } from './util.js';
-import { getProfile } from './registry.js';
-import { loadCache, isFresh } from './usage.js';
+import { getProfile, listProfiles } from './registry.js';
+import { loadCache, isFresh, bestAlternative } from './usage.js';
 import { ensureShared } from './shared.js';
 
 const STALE_MS = 10 * 60_000;
@@ -18,7 +18,7 @@ export function detectProfile(env = process.env) {
   return rel.split(path.sep)[0];
 }
 
-export function buildLine(name, profile, usage) {
+export function buildLine(name, profile, usage, hint = null) {
   if (!name) return dim('○ default account (not a ccm profile)');
   const parts = [colorize(profile?.color ?? 'white', `● ${name}`)];
   if (profile?.email) parts.push(dim(profile.email));
@@ -31,7 +31,18 @@ export function buildLine(name, profile, usage) {
     parts.push(colorize(color, `${short} ${pct}%`));
   }
   if (!usage?.windows?.length) parts.push(dim('usage: n/a'));
+  if (hint) parts.push(colorize('yellow', hint));
   return parts.join(dim(' · '));
+}
+
+// When the session nears its limit and another account has real headroom,
+// surface the escape hatch right where the user is looking.
+export function limitHint(name, usage, profileNames, cache) {
+  const worst = Math.max(0, ...(usage?.windows ?? []).map((w) => w.percent));
+  if (worst < 90) return null;
+  const alt = bestAlternative(name, profileNames, cache);
+  if (!alt || alt.headroom < 30) return null;
+  return `→ ccm move-session ${alt.name}`;
 }
 
 // Entry for `ccm statusline`: must be fast and never throw. Cache only;
@@ -40,8 +51,10 @@ export async function statuslineMain() {
   try {
     const name = detectProfile();
     const profile = name ? getProfile(name) : null;
-    const usage = name ? loadCache()[name] : null;
-    console.log(buildLine(name, profile, usage));
+    const cache = loadCache();
+    const usage = name ? cache[name] : null;
+    const hint = name ? limitHint(name, usage, listProfiles().map((p) => p.name), cache) : null;
+    console.log(buildLine(name, profile, usage, hint));
     if (name && !isFresh(usage, STALE_MS)) {
       spawn(process.execPath, [process.argv[1], 'refresh'], { detached: true, stdio: 'ignore' }).unref();
     }

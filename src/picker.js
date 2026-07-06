@@ -1,8 +1,8 @@
 import { colorize, bold, dim } from './util.js';
 import { isRunning } from './launch.js';
-import { loadCache } from './usage.js';
+import { loadCache, headroom } from './usage.js';
 
-function rowText(p, usage, selected) {
+function rowText(p, usage, selected, isBest) {
   const cursor = selected ? colorize('cyan', '❯') : ' ';
   const name = selected ? bold(p.name.padEnd(14)) : p.name.padEnd(14);
   const email = (p.email ?? '(email unknown)').padEnd(30);
@@ -13,20 +13,30 @@ function rowText(p, usage, selected) {
   }
   const quota = bits.length ? bits.join(' · ') : 'usage: n/a';
   const run = isRunning(p.name) ? colorize('green', '  RUNNING') : '';
-  return ` ${cursor} ${colorize(p.color, '●')} ${name} ${dim(email)} ${dim(quota)}${run}`;
+  const best = isBest ? colorize('green', '  ✦ most headroom') : '';
+  return ` ${cursor} ${colorize(p.color, '●')} ${name} ${dim(email)} ${dim(quota)}${run}${best}`;
+}
+
+// Most available quota first; profiles with no data go last, original order kept.
+export function sortByHeadroom(profiles, cache) {
+  return profiles.map((p, i) => ({ p, i, h: headroom(cache[p.name]) }))
+    .sort((a, b) => (b.h ?? -1) - (a.h ?? -1) || a.i - b.i)
+    .map((x) => x.p);
 }
 
 // Arrow-key profile picker. Resolves to a profile name, or null if cancelled.
-export function pickProfile(profiles, { preselect = null } = {}) {
+export function pickProfile(unsorted, { preselect = null } = {}) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return Promise.resolve(null);
   const cache = loadCache();
+  const profiles = sortByHeadroom(unsorted, cache);
+  const bestName = profiles.length > 1 && headroom(cache[profiles[0].name]) != null ? profiles[0].name : null;
   let index = Math.max(0, profiles.findIndex((p) => p.name === preselect));
   const lineCount = profiles.length + 2;
 
   const render = (first = false) => {
     const lines = [
-      bold('  Pick an account') + dim('   ↑↓ move · enter launch · q quit'),
-      ...profiles.map((p, i) => rowText(p, cache[p.name], i === index)),
+      bold('  Pick an account') + dim('   ↑↓ move · enter launch · q quit · sorted by available quota'),
+      ...profiles.map((p, i) => rowText(p, cache[p.name], i === index, p.name === bestName)),
       '',
     ];
     if (!first) process.stdout.write(`\x1b[${lineCount}A`);
