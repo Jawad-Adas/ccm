@@ -10,7 +10,7 @@ import {
 import { colorize, bold, dim, timeAgo, readJson, writeJson, setDotted, unsetDotted } from '../src/util.js';
 import {
   listProfiles, getProfile, registerProfile, unregisterProfile,
-  refreshIdentity, validName,
+  refreshIdentity, validName, updateProfile,
 } from '../src/registry.js';
 import { unlinkShared } from '../src/shared.js';
 import { prepareProfileDir, hasDefaultLogin, importDefaultInto } from '../src/profiles.js';
@@ -112,6 +112,8 @@ function overrideCmd(args) {
     console.log(cur ? JSON.stringify(cur, null, 2) : dim('  (none — set with: ccm override ' + name + ' key=value)'));
     const md = overrideClaudeMdPath(name);
     console.log(`CLAUDE.md fragment ${dim(`(${md})`)}: ${fs.existsSync(md) ? colorize('green', 'present — appended to shared CLAUDE.md') : dim('none — create the file to add profile-specific memory')}`);
+    const mem = getProfile(name).memory === 'private' ? colorize('yellow', 'private — this account keeps its own') : colorize('green', 'shared — pooled across accounts per project');
+    console.log(`auto-memory: ${mem}`);
     return 0;
   }
   let cfg = readJson(file, {}) ?? {};
@@ -129,6 +131,13 @@ function overrideCmd(args) {
     if (eq < 1) fail(`expected key=value, got "${a}"`);
     const key = a.slice(0, eq);
     const raw = a.slice(eq + 1);
+    if (key === 'memory') {
+      // ccm's own knob, stored in the registry — not a Claude Code setting
+      if (raw !== 'shared' && raw !== 'private') fail('memory must be "shared" or "private"');
+      updateProfile(name, { memory: raw });
+      console.log(`${colorize('green', '✔')} auto-memory for ${bold(name)}: ${raw} ${dim('(applies on next launch)')}`);
+      continue;
+    }
     let value;
     try { value = JSON.parse(raw); } catch { value = raw; }
     setDotted(cfg, key, value);
@@ -353,6 +362,8 @@ ${bold('Per-profile config')} ${dim('(merged over the shared layer at launch)')}
   ccm override <name> [key=value ...] [--unset key] [--clear]
                           settings overrides, e.g. ccm override work model=opus theme=dark
                           ~/.ccm/overrides/<name>.CLAUDE.md is appended to shared CLAUDE.md
+                          memory=private|shared opts an account out of / into the pooled
+                          per-project auto-memory (shared is the default)
   ccm mcp list            shared vs per-profile MCP servers
   ccm mcp share <name> [--from <profile>] / unshare <name>
 

@@ -82,6 +82,12 @@ Your `~/.claude` and the plain `claude` command are never touched — `ccm` is p
   shared or override sources actually change. Configure once, override per account.
 - **Quota-aware picker**: accounts are listed most-headroom-first with a ✦ marker, so
   picking the account with room is the default gesture — switching stays your choice.
+- **Shared auto-memory**: what Claude learns about a project (`projects/<slug>/memory`)
+  is pooled in `~/.ccm/shared/memory` and junction-linked into every profile at launch —
+  the memory follows the repo, not the account. Originals are kept as `memory.bak` when
+  first pooled; the untouched `~/.claude` is seeded from but never linked. Opt an
+  account out with `ccm override <name> memory=private` (it forks the pool and keeps
+  its own from there; `memory=shared` re-pools it).
 - **Quota data** comes from the same undocumented OAuth usage endpoint Claude Code's own
   `/usage` uses. If Anthropic changes it, only the quota columns degrade.
 - **Pinning**: `ccm pin work` writes a `.ccmrc` file; `ccm` walks up from the current

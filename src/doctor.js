@@ -10,6 +10,7 @@ import { listProfiles } from './registry.js';
 import { SHARED_SUBDIRS } from './shared.js';
 import { readOauth, fetchUsage } from './usage.js';
 import { wtDetected, wtInstalled, wtInSync } from './wt.js';
+import { memoryStatus } from './memory.js';
 
 const ok = (msg) => ({ level: 'ok', msg });
 const warn = (msg) => ({ level: 'warn', msg });
@@ -68,6 +69,11 @@ function checkProfile(p) {
   if (fs.existsSync(overrideSettingsPath(p.name))) overrides.push('settings');
   if (fs.existsSync(overrideClaudeMdPath(p.name))) overrides.push('CLAUDE.md');
   if (overrides.length) results.push(ok(`overrides active: ${overrides.join(', ')}`));
+
+  const mem = memoryStatus(dir);
+  if (p.memory === 'private') results.push(ok('auto-memory: private (opted out of pooling)'));
+  else if (mem.local > 0) results.push(warn(`auto-memory: ${mem.local} project(s) pool on next launch (${mem.linked} pooled)`));
+  else if (mem.linked > 0) results.push(ok(`auto-memory: pooled across accounts (${mem.linked} project(s))`));
   return results;
 }
 

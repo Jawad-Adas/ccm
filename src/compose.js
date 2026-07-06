@@ -5,6 +5,8 @@ import {
   overrideSettingsPath, overrideClaudeMdPath,
 } from './paths.js';
 import { readJson, writeJson, deepMerge } from './util.js';
+import { getProfile } from './registry.js';
+import { seedFromDefault, syncMemory } from './memory.js';
 
 function newestMtime(...files) {
   let m = 0;
@@ -24,7 +26,10 @@ function mtimeOf(file) {
 export function composeProfile(name, dir) {
   composeSettings(name, dir);
   composeClaudeMd(name, dir);
-  return composeMcp(name, dir);
+  const warnings = composeMcp(name, dir);
+  seedFromDefault();
+  warnings.push(...syncMemory(dir, getProfile(name)?.memory === 'private' ? 'private' : 'shared'));
+  return warnings;
 }
 
 function composeSettings(name, dir) {
