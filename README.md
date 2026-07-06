@@ -37,7 +37,7 @@ Your `~/.claude` and the plain `claude` command are never touched — `ccm` is p
 | `ccm` | Launches the pinned account for this folder, or shows the arrow-key picker |
 | `ccm <name> [args…]` | Launch that account; args pass through to `claude` |
 | `ccm pick` | Force the picker (ignores any pin) |
-| `ccm import [name]` | Adopt the current `~/.claude` login as a profile |
+| `ccm import [name]` | Adopt the current `~/.claude` login as a profile, including session history so `--resume` sees past conversations (`--no-history` to skip) |
 | `ccm add <name>` | New profile + first login |
 | `ccm list` | Profiles at a glance (email, plan, running/last-used) |
 | `ccm remove <name>` | Delete a profile (confirms; refuses if running) |

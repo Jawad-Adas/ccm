@@ -104,8 +104,13 @@ async function addCmd(args) {
   return code;
 }
 
+// Session state that must travel with an import for --resume/--continue to
+// see past conversations: transcripts, prompt history, checkpoints, tasks.
+const HISTORY_ITEMS = ['projects', 'sessions', 'session-data', 'tasks', 'file-history', 'history.jsonl'];
+
 async function importCmd(args) {
-  const name = args[0] ?? 'main';
+  const name = args.find((a) => !a.startsWith('-')) ?? 'main';
+  const withHistory = !args.includes('--no-history');
   if (!validName(name)) fail(`invalid name "${name}"`);
   if (getProfile(name)) fail(`profile "${name}" already exists`);
   const srcCreds = path.join(DEFAULT_CLAUDE_DIR, '.credentials.json');
@@ -114,6 +119,13 @@ async function importCmd(args) {
   const dir = setupProfileDir(name);
   fs.copyFileSync(srcCreds, path.join(dir, '.credentials.json'));
   if (fs.existsSync(HOME_CLAUDE_JSON)) fs.copyFileSync(HOME_CLAUDE_JSON, path.join(dir, '.claude.json'));
+  if (withHistory) {
+    for (const item of HISTORY_ITEMS) {
+      const src = path.join(DEFAULT_CLAUDE_DIR, item);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(dir, item), { recursive: true, force: true });
+    }
+    console.log(dim('Copied session history — past conversations show up in --resume.'));
+  }
   const p = refreshIdentity(name);
   console.log(`${colorize('green', '✔')} Imported current login as ${bold(name)}` + (p?.email ? ` (${p.email}, ${p.plan ?? '?'})` : ''));
   console.log(dim('Your ~/.claude and the plain "claude" command are untouched.'));
@@ -176,7 +188,8 @@ ${bold('Usage')}
   ccm pick                force the interactive picker (ignores pin)
 
 ${bold('Accounts')}
-  ccm import [name]       adopt your current ~/.claude login as a profile (default: main)
+  ccm import [name]       adopt your current ~/.claude login as a profile, incl. session
+                          history so --resume sees past chats (default: main; --no-history to skip)
   ccm add <name>          create a profile and log in to another account
   ccm list                all profiles at a glance
   ccm remove <name>       delete a profile (asks first; --yes to skip)
