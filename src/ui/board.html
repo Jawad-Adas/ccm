@@ -90,9 +90,22 @@
   .hint{font-size:12.5px; color:var(--muted); margin:6px 0 10px}
   .scope{display:flex; gap:8px; margin:2px 0 12px}
   .scope-btn.active{background:var(--amber); color:#141310}
-  .srow{display:grid; grid-template-columns:96px 110px 90px 1fr auto; gap:14px; align-items:center; padding:11px 8px; border-bottom:1px solid var(--hair); font-size:13px}
-  .srow.with-dir{grid-template-columns:96px 110px 170px 90px 1fr auto}
-  .srow .dir{font-family:var(--mono); color:var(--muted); font-size:12px; overflow:hidden; white-space:nowrap}
+  .srow{display:grid; grid-template-columns:88px 100px 1fr 76px auto; gap:14px; align-items:center; padding:11px 8px; border-bottom:1px solid var(--hair); font-size:13px}
+  .fgroup{border-bottom:1px solid var(--hair)}
+  .fgroup summary{
+    display:flex; gap:12px; align-items:baseline; padding:13px 8px; cursor:pointer; list-style:none;
+    font-family:var(--mono); font-size:13px;
+  }
+  .fgroup summary::-webkit-details-marker{display:none}
+  .fgroup summary:focus-visible{outline:2px solid var(--amber); outline-offset:-2px}
+  .fgroup summary .fold{color:var(--amber); width:1em}
+  .fgroup summary .fdir{color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .fgroup summary .fmeta{color:var(--muted); font-size:11px; letter-spacing:.14em; margin-left:auto; white-space:nowrap}
+  .fgroup[open] summary{border-bottom:1px solid var(--hair)}
+  .fgroup .srow{border-bottom:none; padding-left:28px}
+  .fgroup .srow+.srow{border-top:1px solid rgba(255,255,255,.04)}
+  .srow .sid{font-family:var(--mono); color:var(--muted); font-size:11px; text-align:right}
+  .srow .untitled{color:var(--muted); font-style:italic}
   .srow .t{font-family:var(--mono); color:var(--ink2)}
   .srow .from{font-family:var(--mono); color:var(--muted)}
   .srow .id{font-family:var(--mono); color:var(--ink)}
@@ -262,9 +275,19 @@ function setScope(s){
 }
 $('#scope-here').classList.toggle('active',scope==='here');
 $('#scope-all').classList.toggle('active',scope==='all');
-function trimDir(d){
-  d=String(d).replace(/</g,'&lt;');
-  return d.length>24?'…'+d.slice(-23):d;
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+function sessionRow(s){
+  const targets=state.profiles.filter(p=>!(s.source.kind==='profile'&&p.name===s.source.label));
+  return `<div class="srow">
+    <span class="t">${ago(s.mtime)}</span>
+    <span class="from"><span style="color:${s.source.hue??'var(--muted)'}">${s.source.kind==='profile'?'●':'○'}</span> ${esc(s.source.label)}</span>
+    <span class="title">${s.title?esc(s.title):'<span class="untitled">untitled</span>'}</span>
+    <span class="sid">${s.id.slice(0,8)}</span>
+    <span class="act">
+      <select id="sel-${s.id.slice(0,8)}">${targets.map(t=>`<option>${esc(t.name)}</option>`).join('')}</select>
+      <button class="board-btn mini" onclick="transfer('${s.id}')">Transfer &amp; resume</button>
+    </span>
+  </div>`;
 }
 function renderSessions(){
   const el=$('#sessions');
@@ -272,21 +295,30 @@ function renderSessions(){
     el.innerHTML=`<div class="empty">${scope==='all'?'No sessions on any account yet.':'No sessions for this folder yet — switch to “All folders” or work with Claude Code here first.'}</div>`;
     return;
   }
-  const all=scope==='all';
-  el.innerHTML=state.sessions.map(s=>{
-    const targets=state.profiles.filter(p=>!(s.source.kind==='profile'&&p.name===s.source.label));
-    return `<div class="srow ${all?'with-dir':''}">
-      <span class="t">${ago(s.mtime)}</span>
-      <span class="from"><span style="color:${s.source.hue??'var(--muted)'}">${s.source.kind==='profile'?'●':'○'}</span> ${s.source.label}</span>
-      ${all?`<span class="dir" title="${(s.dir??'').replace(/"/g,'&quot;')}">${trimDir(s.dirShort??'?')}</span>`:''}
-      <span class="id">${s.id.slice(0,8)}</span>
-      <span class="title">${(s.title??'').replace(/</g,'&lt;')}</span>
-      <span class="act">
-        <select id="sel-${s.id.slice(0,8)}">${targets.map(t=>`<option>${t.name}</option>`).join('')}</select>
-        <button class="board-btn mini" onclick="transfer('${s.id}')">Transfer &amp; resume</button>
-      </span>
-    </div>`;
-  }).join('');
+  if(scope!=='all'){
+    el.innerHTML=state.sessions.map(sessionRow).join('');
+    return;
+  }
+  const groups=new Map();
+  for(const s of state.sessions){
+    const dir=s.dirShort??'?';
+    if(!groups.has(dir)) groups.set(dir,[]);
+    groups.get(dir).push(s);
+  }
+  const ordered=[...groups.entries()].sort((a,b)=>b[1][0].mtime-a[1][0].mtime);
+  el.innerHTML=ordered.map(([dir,list],i)=>`
+    <details class="fgroup" ${i===0?'open':''}>
+      <summary>
+        <span class="fold"></span>
+        <span class="fdir" title="${esc(list[0].dir??dir)}">${esc(dir)}</span>
+        <span class="fmeta">${list.length} SESSION${list.length===1?'':'S'} · ${ago(list[0].mtime).toUpperCase()}</span>
+      </summary>
+      ${list.map(sessionRow).join('')}
+    </details>`).join('');
+  el.querySelectorAll('.fgroup').forEach(d=>{
+    const set=()=>d.querySelector('.fold').textContent=d.open?'▾':'▸';
+    set(); d.addEventListener('toggle',set);
+  });
 }
 
 // ── actions ────────────────────────────────────────────────────────────

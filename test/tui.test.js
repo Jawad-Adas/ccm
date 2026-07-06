@@ -8,7 +8,7 @@ process.env.CCM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ccm-tui-'));
 process.env.NO_COLOR = '1';
 const { Canvas } = await import('../src/tui/term.js');
 const { Cascade, meterCells, drawMeter, METER_TILES } = await import('../src/tui/flap.js');
-const { renderBoard, renderSessions } = await import('../src/tui/app.js');
+const { renderBoard, renderSessions, buildSessionRows } = await import('../src/tui/app.js');
 
 test('Canvas puts text and clips at edges', () => {
   const c = new Canvas(10, 2);
@@ -71,33 +71,45 @@ test('renderBoard empty state invites setup', () => {
   assert.match(text, /ccm import/);
 });
 
-test('renderSessions lists transcripts with sources', () => {
-  const state = {
-    sessions: [
-      { id: 'abcd1234-e5', mtime: Date.now() - 60000, title: 'fix the login bug', source: { kind: 'profile', label: 'gasable', color: 'cyan' } },
-      { id: 'ffff0000-11', mtime: Date.now() - 7.2e6, title: null, source: { kind: 'default', label: 'default', color: null } },
-    ],
-    sel: 0, clock: '12:00:00', cwd: 'C:\\x',
-  };
-  const text = renderSessions(state, 100, 24).toText();
+const SESSIONS = [
+  { id: 'abcd1234-e5', mtime: Date.now() - 60000, title: 'fix the login bug', cwd: 'C:\\work\\api',
+    slug: 'C--work-api', source: { kind: 'profile', label: 'gasable', color: 'cyan' } },
+  { id: 'ffff0000-11', mtime: Date.now() - 7.2e6, title: null, cwd: 'C:\\other\\proj',
+    slug: 'C--other-proj', source: { kind: 'default', label: 'default', color: null } },
+];
+
+test('renderSessions this-folder scope lists sessions flat, titles first', () => {
+  const rows = buildSessionRows(SESSIONS, 'here');
+  assert.deepEqual(rows.map((r) => r.type), ['session', 'session']);
+  const text = renderSessions({ rows, sel: 0, clock: '12:00:00', cwd: 'C:\\x' }, 100, 24).toText();
   assert.match(text, /DEPARTURES/);
-  assert.match(text, /abcd1234/);
   assert.match(text, /fix the login bug/);
+  assert.match(text, /abcd1234/);
+  assert.match(text, /untitled/);
   assert.match(text, /transfer/);
   assert.match(text, /all folders/);
 });
 
-test('renderSessions all-folders scope shows the directory column', () => {
-  const state = {
-    scope: 'all',
-    sessions: [
-      { id: 'abcd1234-e5', mtime: Date.now() - 60000, title: 'ship the board', cwd: 'C:\\work\\api',
-        slug: 'C--work-api', source: { kind: 'profile', label: 'gasable', color: 'cyan' } },
-    ],
-    sel: 0, clock: '12:00:00', cwd: 'C:\\elsewhere',
-  };
-  const text = renderSessions(state, 110, 24).toText();
-  assert.match(text, /ALL FOLDERS/);
-  assert.match(text, /C:\\work\\api/);
-  assert.match(text, /this folder/);
+test('buildSessionRows all scope groups by folder, newest group open', () => {
+  const rows = buildSessionRows(SESSIONS, 'all');
+  assert.deepEqual(rows.map((r) => r.type), ['group', 'session', 'group']);
+  assert.equal(rows[0].dir, 'C:\\work\\api');
+  assert.equal(rows[0].open, true);
+  assert.equal(rows[2].open, false);
+  assert.equal(rows[2].count, 1);
+  // explicit openDirs wins
+  const all = buildSessionRows(SESSIONS, 'all', new Set(['C:\\work\\api', 'C:\\other\\proj']));
+  assert.equal(all.filter((r) => r.type === 'session').length, 2);
+});
+
+test('renderSessions all-folders scope draws group headers and scroll state', () => {
+  const rows = buildSessionRows(SESSIONS, 'all');
+  const text = renderSessions({ rows, scope: 'all', total: 2, sel: 0, scrollTop: 0, clock: '12:00:00', cwd: 'C:\\x' }, 110, 24).toText();
+  assert.match(text, /ALL FOLDERS · 2 SESSIONS/);
+  assert.match(text, /▾ C:\\work\\api/);
+  assert.match(text, /▸ C:\\other\\proj/);
+  assert.match(text, /1 SESSION ·/);
+  assert.match(text, /fix the login bug/);
+  assert.doesNotMatch(text, /ffff0000/); // collapsed group hides its sessions
+  assert.match(text, /resume \/ fold/);
 });

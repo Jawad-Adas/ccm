@@ -79,7 +79,7 @@ export function sessionMeta(file) {
   let head = '';
   try {
     const fd = fs.openSync(file, 'r');
-    const buf = Buffer.alloc(16384);
+    const buf = Buffer.alloc(49152);
     const n = fs.readSync(fd, buf, 0, buf.length, 0);
     fs.closeSync(fd);
     head = buf.toString('utf8', 0, n);

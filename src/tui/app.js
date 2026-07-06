@@ -102,41 +102,82 @@ function drawKeybar(c, y, keys) {
   }
 }
 
-function shortDir(dir, max = 26) {
+function shortDir(dir, max = 60) {
   if (!dir) return '?';
   const short = dir.replace(/\\+$/, '').startsWith(os.homedir()) ? '~' + dir.slice(os.homedir().length) : dir;
   return short.length > max ? '…' + short.slice(-(max - 1)) : short;
 }
 
+// Rows for the departures view. This-folder scope: a flat session list.
+// All-folders scope: sessions grouped under collapsible folder headers,
+// groups ordered by their newest session. openDirs = Set of expanded dirs
+// (null → only the newest folder starts open).
+export function buildSessionRows(sessions, scope, openDirs = null) {
+  if (scope !== 'all') return (sessions ?? []).map((s) => ({ type: 'session', s }));
+  const groups = new Map();
+  for (const s of sessions ?? []) {
+    const dir = shortDir(s.cwd ?? s.slug);
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(s);
+  }
+  const ordered = [...groups.entries()].sort((a, b) => b[1][0].mtime - a[1][0].mtime);
+  const open = openDirs ?? new Set(ordered.slice(0, 1).map(([dir]) => dir));
+  const rows = [];
+  for (const [dir, list] of ordered) {
+    rows.push({ type: 'group', dir, count: list.length, latest: list[0].mtime, open: open.has(dir) });
+    if (open.has(dir)) for (const s of list) rows.push({ type: 'session', s, grouped: true });
+  }
+  return rows;
+}
+
+function drawSessionRow(c, y, w, row, selMark) {
+  const s = row.s;
+  const x = row.grouped ? 5 : 2;
+  c.put(x, y, selMark ? '▌' : ' ', S.amberB);
+  c.put(x + 2, y, s.source.kind === 'profile' ? '●' : '○', s.source.kind === 'profile' ? { fg: hueOf(s.source.color) } : S.muted);
+  c.put(x + 4, y, timeAgo(new Date(s.mtime).toISOString()).padEnd(11), S.ink2);
+  c.put(x + 16, y, s.source.label.padEnd(10), S.muted);
+  const titleW = Math.max(0, w - x - 40);
+  if (s.title) c.put(x + 27, y, s.title.slice(0, titleW), selMark ? S.ink : S.ink2);
+  else c.put(x + 27, y, 'untitled', S.seam);
+  c.put(w - 11, y, s.id.slice(0, 8), selMark ? S.ink2 : S.seam);
+}
+
+function drawGroupRow(c, y, w, row, selMark) {
+  c.put(2, y, selMark ? '▌' : ' ', S.amberB);
+  c.put(4, y, row.open ? '▾' : '▸', S.amber);
+  c.put(6, y, row.dir.slice(0, w - 46), selMark ? S.inkB : S.ink);
+  const meta = `${row.count} SESSION${row.count === 1 ? '' : 'S'} · ${timeAgo(new Date(row.latest).toISOString()).toUpperCase()}`;
+  c.put(w - 2 - meta.length, y, meta, S.muted);
+}
+
 export function renderSessions(state, w, h) {
   const c = new Canvas(w, h);
   const all = state.scope === 'all';
+  const rows = state.rows ?? [];
+  const total = rows.filter((r) => r.type === 'session').length + (all ? 0 : 0);
   c.put(2, 0, 'DEPARTURES', S.amberB);
-  c.put(14, 0, all ? 'ALL FOLDERS' : state.cwd.toUpperCase(), S.muted);
+  c.put(14, 0, all ? `ALL FOLDERS · ${state.total ?? total} SESSIONS` : state.cwd.toUpperCase(), S.muted);
   c.put(w - 2 - state.clock.length, 0, state.clock, S.amberB);
   c.put(2, 1, '─'.repeat(w - 4), S.seam);
-  const list = state.sessions ?? [];
-  if (!list.length) {
+  if (!rows.length) {
     c.put(4, 3, all ? 'NO SESSIONS ON ANY ACCOUNT' : 'NO SESSIONS FOR THIS FOLDER', S.inkB);
     c.put(4, 5, all ? 'Sessions appear here once you have worked with Claude Code.'
       : 'Press a to see every folder, or work with Claude Code here first.', S.ink2);
   }
-  const dirW = all ? 26 : 0;
-  let y = 3;
-  for (const [i, s] of list.entries()) {
-    if (y > h - 3) break;
-    const selMark = i === state.sel;
-    c.put(2, y, selMark ? '▌' : ' ', S.amberB);
-    c.put(4, y, s.source.kind === 'profile' ? '●' : '○', s.source.kind === 'profile' ? { fg: hueOf(s.source.color) } : S.muted);
-    c.put(6, y, timeAgo(new Date(s.mtime).toISOString()).padEnd(11), S.ink2);
-    if (all) c.put(18, y, shortDir(s.cwd ?? s.slug, dirW - 1).padEnd(dirW), selMark ? S.ink2 : S.seam);
-    c.put(18 + dirW, y, s.source.label.padEnd(11), S.muted);
-    c.put(30 + dirW, y, s.id.slice(0, 8), selMark ? S.inkB : S.ink);
-    c.put(40 + dirW, y, (s.title ?? '').slice(0, Math.max(0, w - 43 - dirW)), selMark ? S.ink2 : S.muted);
-    y += 1;
+  const viewH = h - 6;
+  const top = state.scrollTop ?? 0;
+  for (let i = 0; i < viewH && top + i < rows.length; i++) {
+    const row = rows[top + i];
+    const y = 3 + i;
+    const selMark = top + i === state.sel;
+    if (row.type === 'group') drawGroupRow(c, y, w, row, selMark);
+    else drawSessionRow(c, y, w, row, selMark);
   }
+  if (top > 0) c.put(w - 4, 2, '▲', S.muted);
+  if (top + viewH < rows.length) c.put(w - 4, h - 3, `▼ ${rows.length - top - viewH}`, S.muted);
   c.put(2, h - 2, '─'.repeat(w - 4), S.seam);
-  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'resume'], ['m', 'transfer'], ['a', all ? 'this folder' : 'all folders'], ['esc', 'board']]);
+  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', all ? 'resume / fold' : 'resume'], ['m', 'transfer'], ['a', all ? 'this folder' : 'all folders'], ['esc', 'board']]);
   return c;
 }
 
@@ -205,6 +246,9 @@ class App {
     this.overlay = null;
     this.cwd = process.cwd();
     this.scope = 'here';
+    this.rows = [];
+    this.openDirs = null;
+    this.scrollTop = 0;
     this.lastClock = '';
   }
 
@@ -248,9 +292,43 @@ class App {
   }
 
   loadSessions() {
-    this.sessions = allSessions(this.scope === 'all' ? null : slugForPath(this.cwd)).slice(0, 40)
+    this.sessions = allSessions(this.scope === 'all' ? null : slugForPath(this.cwd))
+      .slice(0, this.scope === 'all' ? 200 : 40)
       .map((s) => ({ ...s, ...sessionMeta(s.file) }));
+    this.rebuildRows();
     this.sel = 0;
+    this.scrollTop = 0;
+  }
+
+  rebuildRows(keepDir = null) {
+    this.rows = buildSessionRows(this.sessions, this.scope, this.openDirs);
+    if (this.openDirs === null && this.scope === 'all') {
+      this.openDirs = new Set(this.rows.filter((r) => r.type === 'group' && r.open).map((r) => r.dir));
+    }
+    if (keepDir != null) {
+      const i = this.rows.findIndex((r) => r.type === 'group' && r.dir === keepDir);
+      if (i >= 0) this.sel = i;
+    }
+    this.sel = Math.min(this.sel, Math.max(0, this.rows.length - 1));
+    this.ensureVisible();
+  }
+
+  ensureVisible() {
+    const viewH = Math.max(1, this.screen.size.h - 6);
+    if (this.sel < this.scrollTop) this.scrollTop = this.sel;
+    if (this.sel >= this.scrollTop + viewH) this.scrollTop = this.sel - viewH + 1;
+  }
+
+  toggleGroup(row) {
+    if (this.openDirs.has(row.dir)) this.openDirs.delete(row.dir);
+    else this.openDirs.add(row.dir);
+    this.rebuildRows(row.dir);
+    this.render();
+  }
+
+  groupOf(index) {
+    for (let i = index; i >= 0; i--) if (this.rows[i].type === 'group') return this.rows[i];
+    return null;
   }
 
   launch(name, args = [], opts = {}) {
@@ -306,16 +384,26 @@ class App {
 
   keySessions(k) {
     if (k === 'esc' || k === 'q') { this.view = 'board'; this.sel = 0; return this.render(); }
-    if (k === 'up' || k === 'k') return this.move(-1, this.sessions?.length ?? 0);
-    if (k === 'down' || k === 'j') return this.move(1, this.sessions?.length ?? 0);
+    if (k === 'up' || k === 'k') { this.move(-1, this.rows.length); return this.ensureVisible(), this.render(); }
+    if (k === 'down' || k === 'j') { this.move(1, this.rows.length); return this.ensureVisible(), this.render(); }
     if (k === 'a') {
       this.scope = this.scope === 'all' ? 'here' : 'all';
+      this.openDirs = null;
       this.loadSessions();
       this.cascade = new Cascade();
       return this.render();
     }
-    const s = this.sessions?.[this.sel];
-    if (!s) return;
+    const row = this.rows[this.sel];
+    if (!row) return;
+    if (row.type === 'group') {
+      if (k === 'enter' || (k === 'right' && !row.open) || (k === 'left' && row.open)) return this.toggleGroup(row);
+      return;
+    }
+    const s = row.s;
+    if (k === 'left' && row.grouped) {
+      const g = this.groupOf(this.sel);
+      if (g) return this.toggleGroup(g);
+    }
     if (k === 'enter') {
       if (s.source.kind === 'profile') return this.launch(s.source.label, ['--resume', s.id], { cwd: s.cwd });
       return this.openTransfer(s); // default-dir sessions board via a profile
@@ -363,7 +451,8 @@ class App {
     const { w, h } = this.screen.size;
     const state = {
       profiles: this.profiles, cache: this.cache, sel: this.sel, clock: this.clock(),
-      msg: this.msg, spin: this.spin, sessions: this.sessions, doctor: this.doctor,
+      msg: this.msg, spin: this.spin, rows: this.rows, total: this.sessions?.length,
+      scrollTop: this.scrollTop, doctor: this.doctor,
       cwd: this.cwd, scope: this.scope, overlay: this.overlay,
     };
     const c = this.view === 'sessions' ? renderSessions(state, w, h)

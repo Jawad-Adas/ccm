@@ -47,7 +47,7 @@ async function stateJson(cwd, scope = 'here') {
     };
   }));
   profiles.sort((a, b) => (b.headroom ?? -1) - (a.headroom ?? -1));
-  const sessions = allSessions(scope === 'all' ? null : slugForPath(cwd)).slice(0, scope === 'all' ? 40 : 20)
+  const sessions = allSessions(scope === 'all' ? null : slugForPath(cwd)).slice(0, scope === 'all' ? 200 : 20)
     .map((s) => {
       const meta = sessionMeta(s.file);
       return {
