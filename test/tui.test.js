@@ -68,7 +68,50 @@ test('renderBoard shows accounts, meters and keybar headlessly', () => {
 test('renderBoard empty state invites setup', () => {
   const text = renderBoard({ profiles: [], cache: {}, sel: 0, clock: '12:00:00' }, 90, 24).toText();
   assert.match(text, /NO ACCOUNTS ON THE BOARD/);
-  assert.match(text, /ccm import/);
+  assert.match(text, /add your first account/);
+  assert.match(text, /add account/); // keybar
+});
+
+test('add-account overlay: name input → method choice → validation errors', async () => {
+  const { App } = await import('../src/tui/app.js');
+  const app = Object.create(App.prototype);
+  app.overlay = null;
+  app.msg = null;
+  app.profiles = [];
+  app.rendered = 0;
+  app.render = () => { app.rendered++; };
+  app.quit = () => {};
+  app.move = () => {};
+  app.refresh = () => {};
+
+  app.keyBoard('a');
+  assert.equal(app.overlay.kind, 'add-name');
+
+  for (const ch of 'work-2') app.keyOverlay(ch, ch);
+  assert.equal(app.overlay.value, 'work-2');
+  app.keyOverlay('backspace', '\x7f');
+  assert.equal(app.overlay.value, 'work-');
+  app.keyOverlay('!', '!'); // rejected character
+  assert.equal(app.overlay.value, 'work-');
+  app.keyOverlay('2', '2');
+
+  app.keyOverlay('enter', '\r');
+  assert.equal(app.overlay.kind, 'add-method');
+  assert.equal(app.overlay.name, 'work-2');
+  assert.ok(app.overlay.options.length >= 1);
+  assert.equal(app.overlay.options[0].id, 'login');
+
+  // esc returns to the name step with the value kept
+  app.keyOverlay('esc', '\x1b');
+  assert.equal(app.overlay.kind, 'add-name');
+  assert.equal(app.overlay.value, 'work-2');
+
+  // a reserved name bounces back to the input with an error
+  app.overlay.value = 'doctor';
+  app.keyOverlay('enter', '\r');
+  app.keyOverlay('enter', '\r'); // confirm method → registerProfile throws
+  assert.equal(app.overlay.kind, 'add-name');
+  assert.match(app.overlay.error, /CCM COMMAND/);
 });
 
 const SESSIONS = [

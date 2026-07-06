@@ -12,7 +12,9 @@ Terminal tabs.
 
 ```
 ccm                     pinned account here? launch it — otherwise the account board:
-                        pick an account (sorted by headroom), jump to departures
+                        pick an account (sorted by headroom), press a to add an
+                        account right there (fresh login or adopt ~/.claude),
+                        jump to departures
                         (sessions to resume/transfer — press a to switch between this
                         folder and ALL folders, with each session's directory shown;
                         resuming opens Claude Code in that session's own folder),

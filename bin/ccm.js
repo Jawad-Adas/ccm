@@ -4,7 +4,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import {
-  profileDir, DEFAULT_CLAUDE_DIR, HOME_CLAUDE_JSON,
+  profileDir, DEFAULT_CLAUDE_DIR,
   overrideSettingsPath, overrideClaudeMdPath,
 } from '../src/paths.js';
 import { colorize, bold, dim, timeAgo, readJson, writeJson, setDotted, unsetDotted } from '../src/util.js';
@@ -12,8 +12,8 @@ import {
   listProfiles, getProfile, registerProfile, unregisterProfile,
   refreshIdentity, validName,
 } from '../src/registry.js';
-import { ensureShared, linkIntoProfile, unlinkShared } from '../src/shared.js';
-import { composeProfile } from '../src/compose.js';
+import { unlinkShared } from '../src/shared.js';
+import { prepareProfileDir, hasDefaultLogin, importDefaultInto } from '../src/profiles.js';
 import { launchProfile, isRunning } from '../src/launch.js';
 import { findPin, writePin, removePin, PIN_FILE } from '../src/pin.js';
 import { gatherStatus, renderStatus } from '../src/status.js';
@@ -40,13 +40,8 @@ function ask(question) {
 }
 
 function setupProfileDir(name) {
-  const dir = profileDir(name);
-  fs.mkdirSync(dir, { recursive: true });
-  ensureShared();
-  for (const w of [...linkIntoProfile(dir), ...composeProfile(name, dir)]) {
-    console.error(colorize('yellow', `warn: ${w}`));
-  }
-  return dir;
+  for (const w of prepareProfileDir(name)) console.error(colorize('yellow', `warn: ${w}`));
+  return profileDir(name);
 }
 
 function uiCmd(args) {
@@ -263,28 +258,16 @@ async function addCmd(args) {
   return code;
 }
 
-// Session state that must travel with an import for --resume/--continue to
-// see past conversations: transcripts, prompt history, checkpoints, tasks.
-const HISTORY_ITEMS = ['projects', 'sessions', 'session-data', 'tasks', 'file-history', 'history.jsonl'];
-
 async function importCmd(args) {
   const name = args.find((a) => !a.startsWith('-')) ?? 'main';
   const withHistory = !args.includes('--no-history');
   if (!validName(name)) fail(`invalid name "${name}"`);
   if (getProfile(name)) fail(`profile "${name}" already exists`);
-  const srcCreds = path.join(DEFAULT_CLAUDE_DIR, '.credentials.json');
-  if (!fs.existsSync(srcCreds)) fail(`no login found at ${srcCreds} — run claude once and log in first`);
+  if (!hasDefaultLogin()) fail(`no login found in ${DEFAULT_CLAUDE_DIR} — run claude once and log in first`);
   registerProfile(name);
-  const dir = setupProfileDir(name);
-  fs.copyFileSync(srcCreds, path.join(dir, '.credentials.json'));
-  if (fs.existsSync(HOME_CLAUDE_JSON)) fs.copyFileSync(HOME_CLAUDE_JSON, path.join(dir, '.claude.json'));
-  if (withHistory) {
-    for (const item of HISTORY_ITEMS) {
-      const src = path.join(DEFAULT_CLAUDE_DIR, item);
-      if (fs.existsSync(src)) fs.cpSync(src, path.join(dir, item), { recursive: true, force: true });
-    }
-    console.log(dim('Copied session history — past conversations show up in --resume.'));
-  }
+  setupProfileDir(name);
+  importDefaultInto(name, { withHistory });
+  if (withHistory) console.log(dim('Copied session history — past conversations show up in --resume.'));
   const p = refreshIdentity(name);
   console.log(`${colorize('green', '✔')} Imported current login as ${bold(name)}` + (p?.email ? ` (${p.email}, ${p.plan ?? '?'})` : ''));
   console.log(dim('Your ~/.claude and the plain "claude" command are untouched.'));
@@ -343,7 +326,7 @@ function help() {
 
 ${bold('Usage')}
   ccm                     pinned account here? launch it — otherwise the account board
-                          (full-screen split-flap TUI: pick, transfer, doctor)
+                          (full-screen split-flap TUI: pick, add accounts, transfer, doctor)
   ccm <name> [args…]      launch Claude Code on that account (args pass through, e.g. --resume)
   ccm pick                open the account board (ignores pin)
   ccm ui [--port N]       the board as a local web page (launch accounts into WT tabs)

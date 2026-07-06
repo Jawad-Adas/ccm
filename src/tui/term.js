@@ -60,7 +60,8 @@ export class Canvas {
 
 const KEYMAP = {
   '\x1b[A': 'up', '\x1b[B': 'down', '\x1b[C': 'right', '\x1b[D': 'left',
-  '\r': 'enter', '\n': 'enter', '\x1b': 'esc', '\x03': 'ctrl-c', '\x7f': 'backspace', '\t': 'tab',
+  '\r': 'enter', '\n': 'enter', '\x1b': 'esc', '\x03': 'ctrl-c',
+  '\x7f': 'backspace', '\b': 'backspace', '\t': 'tab',
 };
 
 export class Screen {
@@ -71,7 +72,7 @@ export class Screen {
     this._data = (buf) => {
       const s = buf.toString();
       const key = KEYMAP[s] ?? (s.length === 1 ? s.toLowerCase() : null);
-      if (key && this.onKey) this.onKey(key);
+      if (key && this.onKey) this.onKey(key, s); // raw form for text input
     };
     this._resize = () => this.onResize?.();
   }

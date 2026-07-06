@@ -4,7 +4,9 @@
 import { Screen, Canvas } from './term.js';
 import { Cascade, WORDMARK, drawMeter, METER_TILES } from './flap.js';
 import { INK, INK2, MUTED, AMBER, GOOD, CRITICAL, hueOf, meterColor } from './theme.js';
-import { listProfiles } from '../registry.js';
+import { listProfiles, registerProfile, refreshIdentity } from '../registry.js';
+import { prepareProfileDir, hasDefaultLogin, importDefaultInto } from '../profiles.js';
+import { refreshWtIfInstalled } from '../wt.js';
 import { loadCache, refreshAll, headroom, ERROR_HINTS, DEFAULT_MAX_AGE_MS } from '../usage.js';
 import { isRunning, launchProfile } from '../launch.js';
 import { sortByHeadroom } from '../picker.js';
@@ -51,8 +53,9 @@ export function renderBoard(state, w, h) {
 
   if (!profiles.length) {
     c.put(4, 7, 'NO ACCOUNTS ON THE BOARD', S.inkB);
-    c.put(4, 9, 'ccm import <name>   adopt your current ~/.claude login', S.ink2);
-    c.put(4, 10, 'ccm add <name>      log in to another account', S.ink2);
+    c.put(4, 9, 'Press ', S.ink2);
+    c.put(10, 9, 'a', S.amberB);
+    c.put(12, 9, 'to add your first account.', S.ink2);
   }
 
   const rowH = h >= 6 + profiles.length * 4 + 2 ? 4 : 3;
@@ -88,7 +91,7 @@ export function renderBoard(state, w, h) {
   }
 
   c.put(2, h - 2, '─'.repeat(w - 4), S.seam);
-  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'board'], ['s', 'departures'], ['r', 'refresh'], ['d', 'doctor'], ['q', 'quit']]);
+  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'board'], ['a', 'add account'], ['s', 'departures'], ['r', 'refresh'], ['d', 'doctor'], ['q', 'quit']]);
   return c;
 }
 
@@ -210,9 +213,7 @@ export function renderDoctor(state, w, h) {
   return c;
 }
 
-function drawOverlay(c, w, h, state) {
-  const ow = 44;
-  const oh = state.overlay.targets.length + 4;
+function drawBox(c, w, h, ow, oh) {
   const x0 = Math.max(1, ((w - ow) / 2) | 0);
   const y0 = Math.max(1, ((h - oh) / 2) | 0);
   for (let y = y0; y < y0 + oh; y++) c.put(x0, y, ' '.repeat(ow));
@@ -222,13 +223,42 @@ function drawOverlay(c, w, h, state) {
     c.put(x0 + ow - 1, y, '│', S.amber);
   }
   c.put(x0, y0 + oh - 1, '╰' + '─'.repeat(ow - 2) + '╯', S.amber);
-  c.put(x0 + 2, y0 + 1, `TRANSFER ${state.overlay.session.id.slice(0, 8)} TO`, S.amberB);
-  state.overlay.targets.forEach((t, i) => {
-    const y = y0 + 2 + i;
-    c.put(x0 + 2, y, i === state.overlay.sel ? '▌' : ' ', S.amberB);
-    c.put(x0 + 4, y, '●', { fg: hueOf(t.color) });
-    c.put(x0 + 6, y, t.name.toUpperCase(), i === state.overlay.sel ? S.inkB : S.ink);
-  });
+  return { x0, y0 };
+}
+
+function drawOverlay(c, w, h, state) {
+  const o = state.overlay;
+  if (o.kind === 'transfer') {
+    const { x0, y0 } = drawBox(c, w, h, 44, o.targets.length + 4);
+    c.put(x0 + 2, y0 + 1, `TRANSFER ${o.session.id.slice(0, 8)} TO`, S.amberB);
+    o.targets.forEach((t, i) => {
+      const y = y0 + 2 + i;
+      c.put(x0 + 2, y, i === o.sel ? '▌' : ' ', S.amberB);
+      c.put(x0 + 4, y, '●', { fg: hueOf(t.color) });
+      c.put(x0 + 6, y, t.name.toUpperCase(), i === o.sel ? S.inkB : S.ink);
+    });
+    return;
+  }
+  if (o.kind === 'add-name') {
+    const { x0, y0 } = drawBox(c, w, h, 52, o.error ? 7 : 6);
+    c.put(x0 + 2, y0 + 1, 'NEW ACCOUNT — NAME', S.amberB);
+    c.put(x0 + 2, y0 + 3, '> ', S.muted);
+    c.put(x0 + 4, y0 + 3, o.value, S.inkB);
+    c.put(x0 + 4 + o.value.length, y0 + 3, '█', S.amber);
+    if (o.error) c.put(x0 + 2, y0 + 4, o.error.slice(0, 48), S.crit);
+    c.put(x0 + 2, y0 + (o.error ? 5 : 4), 'letters, digits, - and _ · enter next · esc cancel', S.seam);
+    return;
+  }
+  if (o.kind === 'add-method') {
+    const { x0, y0 } = drawBox(c, w, h, 58, o.options.length + 5);
+    c.put(x0 + 2, y0 + 1, `ADD ${o.name.toUpperCase()} — HOW?`, S.amberB);
+    o.options.forEach((opt, i) => {
+      const y = y0 + 3 + i;
+      c.put(x0 + 2, y, i === o.sel ? '▌' : ' ', S.amberB);
+      c.put(x0 + 4, y, opt.label, i === o.sel ? S.inkB : S.ink);
+    });
+    c.put(x0 + 2, y0 + o.options.length + 3, 'enter confirm · esc back', S.seam);
+  }
 }
 
 class App {
@@ -260,7 +290,7 @@ class App {
     return new Promise((resolve) => {
       this.done = resolve;
       this.loadData();
-      this.screen.onKey = (k) => { try { this.key(k); } catch { this.quit(1); } };
+      this.screen.onKey = (k, raw) => { try { this.key(k, raw); } catch { this.quit(1); } };
       this.screen.onResize = () => this.render();
       this.screen.enter();
       this.timer = setInterval(() => this.tick(), 100);
@@ -345,9 +375,9 @@ class App {
     this.render();
   }
 
-  key(k) {
+  key(k, raw) {
     if (k === 'ctrl-c') return this.quit(0);
-    if (this.overlay) return this.keyOverlay(k);
+    if (this.overlay) return this.keyOverlay(k, raw);
     if (this.view === 'board') return this.keyBoard(k);
     if (this.view === 'sessions') return this.keySessions(k);
     if (this.view === 'doctor') return this.keyDoctor(k);
@@ -365,6 +395,10 @@ class App {
     if (k === 'up' || k === 'k') return this.move(-1, this.profiles.length);
     if (k === 'down' || k === 'j' || k === 'tab') return this.move(1, this.profiles.length);
     if (k === 'r') return this.refresh(true);
+    if (k === 'a' || k === '+') {
+      this.overlay = { kind: 'add-name', value: '', error: null };
+      return this.render();
+    }
     if (k === 's' || k === 'm') {
       this.view = 'sessions';
       this.loadSessions();
@@ -423,12 +457,14 @@ class App {
   openTransfer(session) {
     const targets = listProfiles().filter((p) => !(session.source.kind === 'profile' && p.name === session.source.label));
     if (!targets.length) return;
-    this.overlay = { session, targets, sel: 0 };
+    this.overlay = { kind: 'transfer', session, targets, sel: 0 };
     this.render();
   }
 
-  keyOverlay(k) {
+  keyOverlay(k, raw) {
     const o = this.overlay;
+    if (o.kind === 'add-name') return this.keyAddName(k, raw);
+    if (o.kind === 'add-method') return this.keyAddMethod(k);
     if (k === 'esc' || k === 'q') { this.overlay = null; return this.render(); }
     if (k === 'up' || k === 'k') { o.sel = (o.sel - 1 + o.targets.length) % o.targets.length; return this.render(); }
     if (k === 'down' || k === 'j') { o.sel = (o.sel + 1) % o.targets.length; return this.render(); }
@@ -438,6 +474,62 @@ class App {
       this.overlay = null;
       return this.launch(target, ['--resume', o.session.id], { cwd: o.session.cwd });
     }
+  }
+
+  keyAddName(k, raw) {
+    const o = this.overlay;
+    if (k === 'esc') { this.overlay = null; return this.render(); }
+    if (k === 'backspace') { o.value = o.value.slice(0, -1); o.error = null; return this.render(); }
+    if (k === 'enter') {
+      const options = [{ id: 'login', label: 'LOG IN TO A NEW ACCOUNT' }];
+      if (hasDefaultLogin()) options.push({ id: 'import', label: 'USE THE CURRENT ~/.claude LOGIN (SESSIONS TOO)' });
+      this.overlay = { kind: 'add-method', name: o.value, options, sel: 0 };
+      return this.render();
+    }
+    if (raw && /^[A-Za-z0-9_-]$/.test(raw) && o.value.length < 32) {
+      o.value += raw;
+      o.error = null;
+      return this.render();
+    }
+  }
+
+  keyAddMethod(k) {
+    const o = this.overlay;
+    if (k === 'esc') {
+      this.overlay = { kind: 'add-name', value: o.name, error: null };
+      return this.render();
+    }
+    if (k === 'up' || k === 'k') { o.sel = (o.sel - 1 + o.options.length) % o.options.length; return this.render(); }
+    if (k === 'down' || k === 'j') { o.sel = (o.sel + 1) % o.options.length; return this.render(); }
+    if (k === 'enter') return this.executeAdd(o.name, o.options[o.sel].id);
+  }
+
+  executeAdd(name, method) {
+    try {
+      registerProfile(name);
+    } catch (e) {
+      this.overlay = { kind: 'add-name', value: name, error: e.message.toUpperCase() };
+      return this.render();
+    }
+    this.overlay = null;
+    prepareProfileDir(name);
+    if (method === 'import') {
+      importDefaultInto(name);
+      const p = refreshIdentity(name);
+      refreshWtIfInstalled();
+      this.loadData();
+      this.msg = `ADDED ${name.toUpperCase()}${p?.email ? ' · ' + p.email : ''}`;
+      this.cascade = new Cascade();
+      return this.render();
+    }
+    // fresh login: run Claude Code once so the user can /login, then read
+    // the identity it wrote on the way out.
+    this.launch(name);
+    const p = refreshIdentity(name);
+    refreshWtIfInstalled();
+    this.loadData();
+    this.msg = p?.email ? `ADDED ${name.toUpperCase()} · ${p.email}` : `NO LOGIN YET — BOARD ${name.toUpperCase()} AND RUN /login`;
+    this.render();
   }
 
   tick() {
@@ -467,3 +559,5 @@ class App {
 export function runTui() {
   return new App().run();
 }
+
+export { App }; // for headless state-transition tests
