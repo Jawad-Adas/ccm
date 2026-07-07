@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { profileDir } from './paths.js';
+import { profileDir, DEFAULT_CLAUDE_DIR, HOME_CLAUDE_JSON } from './paths.js';
 import { readJson } from './util.js';
+import { listProfiles } from './registry.js';
 
 // Claude Code's OAuth client — CLIENT_ID confirmed from the CLI binary
 // (CLIENT_ID:"9d1c250a…"). The token endpoint is api.anthropic.com, verified
@@ -79,4 +80,40 @@ export async function validOauth(name) {
   if (!oauth.refreshToken) return { error: 'token-expired' };
   const refreshed = await refreshToken(name);
   return refreshed.error ? { error: refreshed.error } : { oauth: refreshed };
+}
+
+// Which Anthropic account a credential source belongs to (uuid preferred).
+// The default ~/.claude keeps oauthAccount in ~/.claude.json (home level);
+// profiles keep it inside their own config dir.
+function accountIdOf(dir) {
+  const jsonPath = dir === DEFAULT_CLAUDE_DIR ? HOME_CLAUDE_JSON : path.join(dir, '.claude.json');
+  const a = readJson(jsonPath, null)?.oauthAccount;
+  return a?.accountUuid ?? a?.emailAddress ?? null;
+}
+
+function credentialSources() {
+  return [
+    ...listProfiles().map((p) => ({ label: p.name, dir: profileDir(p.name) })),
+    { label: '~/.claude', dir: DEFAULT_CLAUDE_DIR },
+  ];
+}
+
+// An access token that can query this profile's usage. Prefers the profile's
+// own token (refreshing if needed). If that can't be revived, borrows a
+// currently-valid token from any other source logged into the SAME account
+// (another profile, or the ~/.claude default) — usage is per-account, so the
+// number is identical. Borrowed tokens are used read-only: never refreshed or
+// rotated, so a running ~/.claude session isn't disturbed.
+export async function resolveToken(name) {
+  const own = await validOauth(name);
+  if (own.oauth) return { accessToken: own.oauth.accessToken };
+  const wantId = accountIdOf(profileDir(name));
+  if (wantId) {
+    for (const src of credentialSources()) {
+      if (src.dir === profileDir(name) || accountIdOf(src.dir) !== wantId) continue;
+      const o = readJson(path.join(src.dir, '.credentials.json'), null)?.claudeAiOauth;
+      if (o?.accessToken && !isExpired(o)) return { accessToken: o.accessToken, borrowedFrom: src.label };
+    }
+  }
+  return { error: own.error };
 }

@@ -307,7 +307,7 @@ class App {
       this.screen.enter();
       this.timer = setInterval(() => this.tick(), 100);
       this.render();
-      this.refresh(false);
+      this.refresh(true); // fetch live usage the moment the board opens
     });
   }
 

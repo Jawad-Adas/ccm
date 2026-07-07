@@ -1,6 +1,6 @@
 import { USAGE_CACHE } from './paths.js';
 import { readJson, writeJson } from './util.js';
-import { validOauth, readOauth } from './oauth.js';
+import { resolveToken, readOauth } from './oauth.js';
 
 // Undocumented endpoint used by Claude Code's own /usage command. If Anthropic
 // changes it, only the quota columns degrade — everything else keeps working.
@@ -56,22 +56,22 @@ export function parseWindows(data) {
 }
 
 export async function fetchUsage(name) {
-  // Refresh the access token first if it's expired/expiring, exactly as
-  // Claude Code does — so usage is accurate even when the account isn't
-  // currently running under ccm.
-  const auth = await validOauth(name);
+  // Get a usable token: the profile's own (refreshed if needed), or a valid
+  // token borrowed from another source on the same account. Usage is
+  // per-account, so a borrowed token returns the same live numbers.
+  const auth = await resolveToken(name);
   if (auth.error) return { error: auth.error };
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     const res = await fetch(ENDPOINT, {
-      headers: { Authorization: `Bearer ${auth.oauth.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
+      headers: { Authorization: `Bearer ${auth.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
       signal: ctrl.signal,
     });
     clearTimeout(timer);
     if (res.status === 401 || res.status === 403) return { error: 'unauthorized' };
     if (!res.ok) return { error: `http-${res.status}` };
-    return { windows: parseWindows(await res.json()), fetchedAt: Date.now() };
+    return { windows: parseWindows(await res.json()), fetchedAt: Date.now(), borrowedFrom: auth.borrowedFrom ?? null };
   } catch (e) {
     return { error: e.name === 'AbortError' ? 'timeout' : 'network' };
   }

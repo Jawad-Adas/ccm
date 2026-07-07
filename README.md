@@ -89,12 +89,16 @@ Your `~/.claude` and the plain `claude` command are never touched — `ccm` is p
   account out with `ccm override <name> memory=private` (it forks the pool and keeps
   its own from there; `memory=shared` re-pools it).
 - **Quota data** comes from the same undocumented OAuth usage endpoint Claude Code's own
-  `/usage` uses. ccm refreshes each profile's access token the same way Claude Code does
-  (via the stored refresh token) so the numbers are accurate even for accounts that
-  aren't currently running. If a token genuinely can't be refreshed (e.g. the same
-  account is logged into `~/.claude` too and rotated it away), the board shows the last
-  reading marked **stale** — "as of Xh ago" with a re-login hint — never a stale number
-  dressed up as live. If Anthropic changes the endpoint, only the quota columns degrade.
+  `/usage` uses, and is fetched **live when the board opens** (`ccm` and `ccm ui` both
+  refresh on launch). ccm refreshes each profile's access token the same way Claude Code
+  does (via the stored refresh token) so the numbers are accurate even for accounts that
+  aren't currently running. If a profile's own token can't be refreshed (e.g. the same
+  account is also the `~/.claude` login and rotated it away), ccm **borrows a valid token
+  from any other source on the same account** — usage is per-account, so the number is
+  identical; borrowed tokens are used read-only and never rotated. Only if no live token
+  exists anywhere for that account does the board fall back to the last reading, clearly
+  marked **stale** ("as of Xh ago" + re-login hint) — never a stale number dressed up as
+  live. If Anthropic changes the endpoint, only the quota columns degrade.
 - **Pinning**: `ccm pin work` writes a `.ccmrc` file; `ccm` walks up from the current
   folder and auto-launches the nearest pin.
 - **No auto-rotation**: ccm deliberately does not auto-switch accounts when quota runs

@@ -359,11 +359,12 @@ async function runDoctor(){
 }
 function stamp(){ $('#updated').textContent='updated '+new Date().toTimeString().slice(0,5); $('#cwd').textContent=state.cwd; }
 
-async function load(){
-  state=await api('/api/state?scope='+scope);
+async function load(force){
+  // Fetch live usage the moment the board opens; polls read the cache.
+  state = force ? await api('/api/refresh',{scope}) : await api('/api/state?scope='+scope);
   renderBoard(); renderSessions(); stamp();
 }
-load();
+load(true);
 setInterval(load, 20000);
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) load(); });
 </script>

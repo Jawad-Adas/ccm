@@ -5,16 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 
 process.env.CCM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ccm-oauth-'));
-const { refreshToken, validOauth, readOauth } = await import('../src/oauth.js');
+process.env.CCM_CLAUDE_DIR = path.join(process.env.CCM_HOME, 'fake-claude');
+const { refreshToken, validOauth, resolveToken, readOauth } = await import('../src/oauth.js');
 const { profileDir } = await import('../src/paths.js');
 const { registerProfile } = await import('../src/registry.js');
 
-function writeCreds(name, oauth, extra = {}) {
+function writeCreds(name, oauth, { accountUuid = null } = {}) {
   registerProfile(name);
   const dir = profileDir(name);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, '.credentials.json'),
-    JSON.stringify({ mcpOAuth: { keep: 'me' }, claudeAiOauth: oauth, ...extra }));
+    JSON.stringify({ mcpOAuth: { keep: 'me' }, claudeAiOauth: oauth }));
+  if (accountUuid) fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid } }));
 }
 
 const realFetch = globalThis.fetch;
@@ -79,4 +81,20 @@ test('validOauth passes through a still-valid token without a network call', asy
 test('validOauth surfaces token-expired when there is no refresh token', async () => {
   writeCreds('v3', { accessToken: 'old', expiresAt: Date.now() - 1000 });
   assert.deepEqual(await validOauth('v3'), { error: 'token-expired' });
+});
+
+test('resolveToken borrows a valid token from another source on the same account', async () => {
+  // dead profile: expired, no refresh token → its own token is unrecoverable
+  writeCreds('dead', { accessToken: 'x', expiresAt: Date.now() - 1000 }, { accountUuid: 'acct-shared' });
+  // sibling logged into the SAME account with a live token
+  writeCreds('alive', { accessToken: 'live-token', expiresAt: Date.now() + 3_600_000 }, { accountUuid: 'acct-shared' });
+  const res = await resolveToken('dead');
+  assert.equal(res.accessToken, 'live-token');
+  assert.equal(res.borrowedFrom, 'alive');
+});
+
+test('resolveToken does not borrow across different accounts', async () => {
+  writeCreds('dead2', { accessToken: 'x', expiresAt: Date.now() - 1000 }, { accountUuid: 'acct-A' });
+  writeCreds('other', { accessToken: 'nope', expiresAt: Date.now() + 3_600_000 }, { accountUuid: 'acct-B' });
+  assert.deepEqual(await resolveToken('dead2'), { error: 'token-expired' });
 });
