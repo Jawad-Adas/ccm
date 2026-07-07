@@ -1,6 +1,6 @@
 {
   "name": "ccm-account-manager",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Claude Code account manager — unlimited named profiles, instant switching, simultaneous sessions, quota dashboard, statusline integration",
   "type": "module",
   "bin": {

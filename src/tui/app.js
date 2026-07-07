@@ -7,7 +7,7 @@ import { INK, INK2, MUTED, AMBER, GOOD, CRITICAL, hueOf, meterColor } from './th
 import { listProfiles, registerProfile, refreshIdentity } from '../registry.js';
 import { prepareProfileDir, hasDefaultLogin, importDefaultInto } from '../profiles.js';
 import { refreshWtIfInstalled } from '../wt.js';
-import { loadCache, refreshAll, headroom, ERROR_HINTS, DEFAULT_MAX_AGE_MS } from '../usage.js';
+import { loadCache, refreshAll, headroom, ERROR_HINTS, DEFAULT_MAX_AGE_MS, isStale } from '../usage.js';
 import { isRunning, launchProfile } from '../launch.js';
 import { sortByHeadroom } from '../picker.js';
 import os from 'node:os';
@@ -30,8 +30,14 @@ function sessionWindows(usage) {
   };
 }
 
+function isStaleUsage(usage) {
+  return !!usage && (usage.staleError || isStale(usage));
+}
+
 function chipFor(p, usage, isBest) {
   if (isRunning(p.name)) return { text: '● IN SESSION', style: S.good };
+  // Never assert FULL / MOST HEADROOM off data we couldn't refresh.
+  if (isStaleUsage(usage)) return { text: '⟳ STALE', style: S.muted };
   const worst = Math.max(0, ...(usage?.windows ?? []).map((w) => w.percent));
   if (worst >= 95) return { text: '■ FULL', style: S.crit };
   if (worst >= 80) return { text: '▲ ALMOST FULL', style: S.amber };
@@ -74,19 +80,25 @@ export function renderBoard(state, w, h) {
     if (chip) c.put(w - 2 - chip.text.length, y, chip.text, chip.style);
 
     const { fiveH, week } = sessionWindows(usage);
+    const stale = isStaleUsage(usage);
     const meterRow = (yy, label, win) => {
       c.put(6, yy, label, S.muted);
       if (!win) {
         c.put(11, yy, usage?.error ? (ERROR_HINTS[usage.error] ?? usage.error) : 'no usage data — press r', S.seam);
         return;
       }
-      const end = drawMeter(c, 11, yy, win.percent, { fg: meterColor(win.percent) }, S.seam);
-      c.put(end + 1, yy, `${String(Math.round(win.percent)).padStart(3)}%`, S.ink2);
+      // Stale meters render in the recessive seam tone, not the live fill/amber.
+      const end = drawMeter(c, 11, yy, win.percent, { fg: stale ? MUTED : meterColor(win.percent) }, S.seam);
+      c.put(end + 1, yy, `${String(Math.round(win.percent)).padStart(3)}%`, stale ? S.muted : S.ink2);
       c.put(end + 7, yy, 'RESETS', S.muted);
-      c.put(end + 14, yy, timeUntil(win.resetsAt).toUpperCase(), S.amber);
+      c.put(end + 14, yy, timeUntil(win.resetsAt).toUpperCase(), stale ? S.muted : S.amber);
     };
     meterRow(y + 1, '5H', fiveH);
     meterRow(y + 2, 'WK', week);
+    if (stale && usage?.fetchedAt) {
+      const asOf = `as of ${timeAgo(new Date(usage.fetchedAt).toISOString())}`;
+      c.put(w - 2 - asOf.length, y + 1, asOf, S.muted);
+    }
     y += rowH;
   }
 

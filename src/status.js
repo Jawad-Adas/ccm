@@ -1,6 +1,6 @@
 import { listProfiles } from './registry.js';
 import { isRunning } from './launch.js';
-import { getUsage, ERROR_HINTS, DEFAULT_MAX_AGE_MS } from './usage.js';
+import { getUsage, ERROR_HINTS, DEFAULT_MAX_AGE_MS, isStale } from './usage.js';
 import { bar, bold, dim, colorize, severityColor, timeUntil, timeAgo } from './util.js';
 
 export async function gatherStatus({ maxAgeMs = DEFAULT_MAX_AGE_MS, cacheOnly = false } = {}) {
@@ -30,16 +30,24 @@ export function renderStatus(rows) {
     out.push(head.join('  '));
 
     const u = p.usage;
+    const stale = u && (u.staleError || isStale(u));
     if (u?.windows?.length) {
       const labelWidth = Math.max(...u.windows.map((w) => w.label.length));
       for (const w of u.windows) {
-        const color = severityColor(w.percent, w.severity);
+        // Don't paint severity on stale numbers — they may no longer be true.
+        const color = stale ? 'gray' : severityColor(w.percent, w.severity);
         out.push(
           `    ${w.label.padEnd(labelWidth)}  ${colorize(color, bar(w.percent))}  ` +
           `${String(Math.round(w.percent)).padStart(3)}%  ${dim(`resets in ${timeUntil(w.resetsAt)}`)}`
         );
       }
-      out.push(dim(`    fetched ${timeAgo(u.fetchedAt ? new Date(u.fetchedAt).toISOString() : null)}`));
+      const asOf = timeAgo(u.fetchedAt ? new Date(u.fetchedAt).toISOString() : null);
+      if (stale) {
+        const hint = u.staleError ? ERROR_HINTS[u.staleError] ?? u.staleError : 'could not refresh';
+        out.push(colorize('yellow', `    stale — as of ${asOf} · ${hint}`));
+      } else {
+        out.push(dim(`    fetched ${asOf}`));
+      }
     } else if (u?.error) {
       out.push(`    ${colorize('yellow', ERROR_HINTS[u.error] ?? `usage unavailable (${u.error})`)}`);
     } else {

@@ -31,6 +31,7 @@ export function buildLine(name, profile, usage, hint = null) {
     parts.push(colorize(color, `${short} ${pct}%`));
   }
   if (!usage?.windows?.length) parts.push(dim('usage: n/a'));
+  else if (usage.staleError || (usage.fetchedAt && Date.now() - usage.fetchedAt >= STALE_MS)) parts.push(dim('stale'));
   if (hint) parts.push(colorize('yellow', hint));
   return parts.join(dim(' · '));
 }

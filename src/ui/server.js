@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { listProfiles, getProfile } from '../registry.js';
-import { getUsage, refreshAll, headroom } from '../usage.js';
+import { getUsage, refreshAll, headroom, isStale } from '../usage.js';
 import { isRunning } from '../launch.js';
 import os from 'node:os';
 import { slugForPath, allSessions, sessionMeta, copySessionTo } from '../sessions.js';
@@ -43,6 +43,9 @@ async function stateJson(cwd, scope = 'here') {
       color: p.color, hue: HUES[p.color] ?? '#C3C2B7',
       running: isRunning(p.name), headroom: headroom(usage),
       windows: usage?.windows ?? null, usageError: usage?.error ?? null,
+      stale: !!usage && (!!usage.staleError || isStale(usage)),
+      staleError: usage?.staleError ?? null,
+      fetchedAt: usage?.fetchedAt ?? null,
       lastUsed: p.lastUsed,
     };
   }));

@@ -74,8 +74,11 @@
   .resets{color:var(--amber); letter-spacing:.06em; white-space:nowrap}
   .resets b{color:var(--muted); font-weight:400; margin-right:.6em; letter-spacing:.18em}
   .nodata{font-family:var(--mono); font-size:12.5px; color:var(--muted)}
+  .meter.stale .tile.on{background:linear-gradient(180deg,#4a4a46,#333330)}
+  .meter.stale .pct,.meter.stale .resets,.meter.stale .resets b{color:var(--muted)}
+  .staleline{font-family:var(--mono); font-size:11.5px; color:var(--amber); margin-top:4px}
   .chip{font-family:var(--mono); font-size:11px; letter-spacing:.14em; white-space:nowrap; justify-self:end}
-  .chip.good{color:var(--good)} .chip.warn{color:var(--amber)} .chip.crit{color:var(--crit)}
+  .chip.good{color:var(--good)} .chip.warn{color:var(--amber)} .chip.crit{color:var(--crit)} .chip.stale{color:var(--muted)}
   .board-btn{
     font-family:var(--mono); font-size:12.5px; letter-spacing:.2em; cursor:pointer;
     color:var(--amber); background:none; border:1px solid rgba(250,178,25,.45); border-radius:5px;
@@ -208,12 +211,12 @@ tickClock(); setInterval(tickClock,1000);
 
 // ── board rows ─────────────────────────────────────────────────────────
 let state=null;
-function meterHtml(w){
+function meterHtml(w, stale){
   if(!w) return '';
-  const on=Math.round(w.percent/10), cls=w.percent>=95?'crit':w.percent>=80?'warn':'';
+  const on=Math.round(w.percent/10), cls=stale?'':w.percent>=95?'crit':w.percent>=80?'warn':'';
   const tiles=Array.from({length:10},(_,i)=>`<span class="tile ${i<on?'on '+cls:''}"></span>`).join('');
   const label=w.label.startsWith('session')?'5H':w.label==='week (all models)'?'WK':w.label.replace(/^week \((.+)\)$/,'$1').toUpperCase().slice(0,6);
-  return `<div class="meter"><label>${label}</label><span class="tiles">${tiles}</span>`+
+  return `<div class="meter${stale?' stale':''}"><label>${label}</label><span class="tiles">${tiles}</span>`+
          `<span class="pct">${Math.round(w.percent)}%</span>`+
          `<span class="resets"><b>RESETS</b>${until(w.resetsAt)}</span></div>`;
 }
@@ -232,12 +235,14 @@ function ago(t){
 }
 function chip(p){
   if(p.running) return '<span class="chip good">● IN SESSION</span>';
+  if(p.stale) return '<span class="chip stale">⟳ STALE</span>';
   const worst=Math.max(0,...(p.windows??[]).map(w=>w.percent));
   if(worst>=95) return '<span class="chip crit">■ FULL</span>';
   if(worst>=80) return '<span class="chip warn">▲ ALMOST FULL</span>';
   if(state && p.name===state.best) return '<span class="chip good">✦ MOST HEADROOM</span>';
   return '<span class="chip"></span>';
 }
+const HINTS={'refresh-rejected':'login expired — launch this account to sign in again','token-expired':'launch this account once to refresh','no-refresh-token':'launch this account and run /login','refresh-network':'network error refreshing token','refresh-timeout':'timed out refreshing token'};
 function renderBoard(){
   const el=$('#board');
   if(!state.profiles.length){
@@ -254,8 +259,9 @@ function renderBoard(){
         ${p.plan?`<span class="plan">${p.plan.toUpperCase()}${p.organization&&!/'s organization$/i.test(p.organization)?' · '+p.organization.toUpperCase().slice(0,24):''}</span>`:''}
       </div>
       <div class="meters">${
-        p.windows ? p.windows.slice(0,3).map(meterHtml).join('')
-        : `<span class="nodata">${p.usageError==='token-expired'?'token expired — launch once to refresh':'no usage data yet'}</span>`
+        p.windows ? p.windows.slice(0,3).map(w=>meterHtml(w,p.stale)).join('')
+          + (p.stale?`<div class="staleline">as of ${p.fetchedAt?ago(p.fetchedAt):'?'} · ${HINTS[p.staleError]??'could not refresh'}</div>`:'')
+        : `<span class="nodata">${HINTS[p.usageError]??'no usage data yet'}</span>`
       }</div>
       ${chip(p)}
       <button class="board-btn" onclick="board('${p.name}')" title="Open a Windows Terminal tab on this account">Board</button>

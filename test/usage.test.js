@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 process.env.CCM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ccm-usage-'));
-const { parseWindows, isFresh, loadCache, saveCache } = await import('../src/usage.js');
+const { parseWindows, isFresh, isStale, loadCache, saveCache, STALE_MS } = await import('../src/usage.js');
+const { isExpired } = await import('../src/oauth.js');
 
 // Shape captured live from the endpoint on 2026-07-06.
 const LIVE_SAMPLE = {
@@ -53,4 +54,21 @@ test('cache roundtrip', () => {
   assert.deepEqual(loadCache(), {});
   saveCache({ work: { fetchedAt: 1, windows: [] } });
   assert.deepEqual(loadCache(), { work: { fetchedAt: 1, windows: [] } });
+});
+
+test('isStale flags entries older than the threshold', () => {
+  const now = 10_000_000;
+  assert.ok(!isStale({ fetchedAt: now - 60_000 }, now));
+  assert.ok(isStale({ fetchedAt: now - STALE_MS - 1 }, now));
+  assert.ok(!isStale(null, now));
+  assert.ok(!isStale({}, now));
+});
+
+test('isExpired treats the skew window and missing expiry as expired', () => {
+  const now = 5_000_000;
+  assert.ok(isExpired({ expiresAt: now - 1 }, now));      // already expired
+  assert.ok(isExpired({ expiresAt: now + 30_000 }, now)); // inside 60s skew
+  assert.ok(!isExpired({ expiresAt: now + 120_000 }, now));
+  assert.ok(isExpired({}, now));                          // no expiry → refresh
+  assert.ok(isExpired(null, now));
 });

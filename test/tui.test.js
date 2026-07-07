@@ -65,6 +65,27 @@ test('renderBoard shows accounts, meters and keybar headlessly', () => {
   assert.match(text, /doctor/);
 });
 
+test('renderBoard marks stale usage instead of asserting it live', () => {
+  const old = Date.now() - 60 * 60_000; // 1h ago → past STALE_MS
+  const state = {
+    profiles: [{ name: 'gasable', email: 'j@x.com', plan: 'team', color: 'cyan' }],
+    cache: {
+      gasable: {
+        fetchedAt: old, staleError: 'refresh-rejected',
+        windows: [
+          { label: 'session (5h)', percent: 100, resetsAt: new Date(Date.now() + 3.6e6).toISOString() },
+          { label: 'week (all models)', percent: 19, resetsAt: new Date(Date.now() + 8.64e7).toISOString() },
+        ],
+      },
+    },
+    sel: 0, clock: '12:00:00', msg: null, spin: false,
+  };
+  const text = renderBoard(state, 110, 30).toText();
+  assert.match(text, /STALE/);
+  assert.doesNotMatch(text, /FULL/);        // never claims 100% is live
+  assert.match(text, /as of .* ago/);
+});
+
 test('renderBoard empty state invites setup', () => {
   const text = renderBoard({ profiles: [], cache: {}, sel: 0, clock: '12:00:00' }, 90, 24).toText();
   assert.match(text, /NO ACCOUNTS ON THE BOARD/);
