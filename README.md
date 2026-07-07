@@ -56,7 +56,7 @@ Your `~/.claude` and the plain `claude` command are never touched — `ccm` is p
 | `ccm list` | Profiles at a glance (email, plan, running/last-used) |
 | `ccm remove <name>` | Delete a profile (confirms; refuses if running) |
 | `ccm status [--fresh\|--json]` | Usage bars, reset times, severity for every account |
-| `ccm move-session <to> [id]` | Copy the latest session for this folder (or a given id) to another account and resume it there — the original stays put (`--no-launch` to skip launching) |
+| `ccm move-session <to> [id]` | Copy the latest session for this folder (or a given id) to another account and resume it there — the original stays put (`--no-launch` to skip launching). Session lists (here and in the board's departures view) match Claude Code's `/resume`: subagent / SDK transcripts — the many small files a workflow or Task fan-out spawns, marked with an `sdk*` entrypoint — are hidden, so a folder with one real chat and 400 subagent runs shows one session, not 401 |
 | `ccm override <name> [key=value…]` | Per-profile settings merged over the shared layer at launch (e.g. `model=opus theme=dark env.FOO=1`); `--unset key`, `--clear`. `~/.ccm/overrides/<name>.CLAUDE.md` is appended to the shared CLAUDE.md the same way |
 | `ccm mcp list / share <name> / unshare <name>` | Shared MCP servers are injected into every profile; servers a profile adds itself always win and are never touched |
 | `ccm doctor` | Health check: claude binary, tokens, junctions (auto-repairs), stale locks, integrations |

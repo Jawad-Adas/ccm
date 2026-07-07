@@ -23,8 +23,9 @@ export function listTranscripts(baseDir, slug) {
 }
 
 // Find a session for this slug across all profiles (except the target) and
-// the default ~/.claude. Exact id match wins; otherwise the most recent.
-// Sources are labeled so the user can see where the session came from.
+// the default ~/.claude. Exact id match wins; otherwise the most recent
+// user-facing session (an id can still target any transcript, but the
+// "latest" pick skips SDK/subagent transcripts — you resume real chats).
 export function findSession(slug, id, excludeProfile) {
   const sources = [
     ...listProfiles().filter((p) => p.name !== excludeProfile)
@@ -41,7 +42,8 @@ export function findSession(slug, id, excludeProfile) {
   if (!candidates.length) return null;
   // newest first; among equals prefer a profile over the default dir
   candidates.sort((a, b) => (b.mtime - a.mtime) || (a.source.kind === 'profile' ? -1 : 1));
-  return candidates[0];
+  if (id) return candidates[0];
+  return candidates.find((c) => isUserFacing(sessionMeta(c.file).entrypoint)) ?? candidates[0];
 }
 
 // Sessions across all profiles + default, newest first, deduped by id
@@ -71,39 +73,80 @@ export function allSessions(slug = null) {
   return [...byId.values()].sort((a, b) => b.mtime - a.mtime);
 }
 
-// Best-effort metadata from the transcript head (first 16KB, one read):
+// A session is "user-facing" (shown by Claude Code's /resume) when it was
+// started interactively — entrypoint "cli", "vscode", "desktop", etc. Sessions
+// spawned programmatically (subagents, Task/workflow fan-out, the SDK) carry an
+// "sdk*" entrypoint and are hidden from /resume; ccm hides them too.
+export function isUserFacing(entrypoint) {
+  return !entrypoint || !/^sdk/i.test(entrypoint);
+}
+
+const MAX_LINE = 65536;   // parse only reasonably-sized JSONL lines
+const MAX_SCAN = 1 << 20; // stop scanning a transcript after 1 MB
+
+// Best-effort metadata from the transcript head:
 // title — a compaction summary if present, else the first user message;
-// cwd — the directory the session belongs to (needed to resume it, since
-// Claude Code scopes sessions per folder).
+// cwd — the directory the session belongs to (resume must run there);
+// entrypoint — how the session was started (drives isUserFacing).
+// Streams line-by-line and skips oversized lines (a big queue-operation blob
+// can be the first line, pushing the entrypoint-bearing user line past a fixed
+// read window — which would misclassify SDK subagent sessions as user-facing).
 export function sessionMeta(file) {
-  let head = '';
-  try {
-    const fd = fs.openSync(file, 'r');
-    const buf = Buffer.alloc(49152);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    fs.closeSync(fd);
-    head = buf.toString('utf8', 0, n);
-  } catch { return { title: null, cwd: null }; }
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch { return { title: null, cwd: null, entrypoint: null }; }
   const clean = (s) => String(s).replace(/\s+/g, ' ').trim().slice(0, 80) || null;
   let title = null;
   let cwd = null;
-  for (const line of head.split('\n')) {
-    let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
-    if (!cwd && typeof obj?.cwd === 'string') cwd = obj.cwd;
-    if (!title && obj?.type === 'summary' && obj.summary) title = clean(obj.summary);
-    const msg = obj?.message;
-    if (!title && (obj?.type === 'user' || msg?.role === 'user') && msg?.content) {
+  let entrypoint = null;
+  const consider = (line) => {
+    if (!line || line.length > MAX_LINE) return; // skip blank/oversized lines
+    let o;
+    try { o = JSON.parse(line); } catch { return; }
+    if (!cwd && typeof o?.cwd === 'string') cwd = o.cwd;
+    if (!entrypoint && typeof o?.entrypoint === 'string') entrypoint = o.entrypoint;
+    if (!title && o?.type === 'summary' && o.summary) title = clean(o.summary);
+    const msg = o?.message;
+    if (!title && (o?.type === 'user' || msg?.role === 'user') && msg?.content) {
       if (typeof msg.content === 'string') title = clean(msg.content);
       else title = clean(msg.content.find?.((c) => c?.type === 'text')?.text ?? '');
     }
-    if (title && cwd) break;
+  };
+  const CH = 65536;
+  const buf = Buffer.alloc(CH);
+  let carry = '';
+  let read = 0;
+  try {
+    while (read < MAX_SCAN) {
+      const n = fs.readSync(fd, buf, 0, CH, read);
+      if (n <= 0) break;
+      read += n;
+      carry += buf.toString('utf8', 0, n);
+      let nl;
+      while ((nl = carry.indexOf('\n')) >= 0) {
+        consider(carry.slice(0, nl));
+        carry = carry.slice(nl + 1);
+        if (title && cwd && entrypoint) return { title, cwd, entrypoint };
+      }
+    }
+    consider(carry);
+  } catch { /* fall through with whatever we found */ } finally {
+    try { fs.closeSync(fd); } catch {}
   }
-  return { title, cwd };
+  return { title, cwd, entrypoint };
 }
 
 export function sessionTitle(file) {
   return sessionMeta(file).title;
+}
+
+// User-facing sessions for a slug (or all folders when slug is null), each with
+// metadata attached, newest first. Reads every candidate's head to classify by
+// entrypoint and filter out subagent/SDK transcripts — this is what makes the
+// count match Claude Code's own /resume.
+export function listSessions(slug = null, { includeSdk = false } = {}) {
+  return allSessions(slug)
+    .map((s) => ({ ...s, ...sessionMeta(s.file) }))
+    .filter((s) => includeSdk || isUserFacing(s.entrypoint));
 }
 
 // Copy a session's transcript + artifacts into the target profile.

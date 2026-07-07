@@ -11,7 +11,7 @@ import { loadCache, refreshAll, headroom, ERROR_HINTS, DEFAULT_MAX_AGE_MS, isSta
 import { isRunning, launchProfile } from '../launch.js';
 import { sortByHeadroom } from '../picker.js';
 import os from 'node:os';
-import { slugForPath, allSessions, sessionMeta, copySessionTo } from '../sessions.js';
+import { slugForPath, listSessions, copySessionTo } from '../sessions.js';
 import { collectDoctor } from '../doctor.js';
 import { timeAgo, timeUntil } from '../util.js';
 
@@ -334,9 +334,9 @@ class App {
   }
 
   loadSessions() {
-    this.sessions = allSessions(this.scope === 'all' ? null : slugForPath(this.cwd))
-      .slice(0, this.scope === 'all' ? 200 : 40)
-      .map((s) => ({ ...s, ...sessionMeta(s.file) }));
+    // listSessions filters out SDK/subagent transcripts, matching /resume.
+    this.sessions = listSessions(this.scope === 'all' ? null : slugForPath(this.cwd))
+      .slice(0, this.scope === 'all' ? 200 : 40);
     this.rebuildRows();
     this.sel = 0;
     this.scrollTop = 0;

@@ -11,7 +11,7 @@ import { listProfiles, getProfile } from '../registry.js';
 import { getUsage, refreshAll, headroom, isStale } from '../usage.js';
 import { isRunning } from '../launch.js';
 import os from 'node:os';
-import { slugForPath, allSessions, sessionMeta, copySessionTo } from '../sessions.js';
+import { slugForPath, allSessions, listSessions, copySessionTo } from '../sessions.js';
 import { collectDoctor } from '../doctor.js';
 import { HUES } from '../tui/theme.js';
 
@@ -50,15 +50,12 @@ async function stateJson(cwd, scope = 'here') {
     };
   }));
   profiles.sort((a, b) => (b.headroom ?? -1) - (a.headroom ?? -1));
-  const sessions = allSessions(scope === 'all' ? null : slugForPath(cwd)).slice(0, scope === 'all' ? 200 : 20)
-    .map((s) => {
-      const meta = sessionMeta(s.file);
-      return {
-        id: s.id, mtime: s.mtime, title: meta.title,
-        dir: meta.cwd, dirShort: shortDir(meta.cwd) ?? s.slug,
-        source: { kind: s.source.kind, label: s.source.label, hue: HUES[s.source.color] ?? null },
-      };
-    });
+  const sessions = listSessions(scope === 'all' ? null : slugForPath(cwd)).slice(0, scope === 'all' ? 200 : 20)
+    .map((s) => ({
+      id: s.id, mtime: s.mtime, title: s.title,
+      dir: s.cwd, dirShort: shortDir(s.cwd) ?? s.slug,
+      source: { kind: s.source.kind, label: s.source.label, hue: HUES[s.source.color] ?? null },
+    }));
   return { profiles, sessions, scope, cwd, now: Date.now() };
 }
 
