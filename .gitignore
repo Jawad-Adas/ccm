@@ -1,2 +1,5 @@
 node_modules/
 *.log
+
+# internal design notes — kept local, not shipped
+docs/superpowers/
