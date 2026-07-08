@@ -84,6 +84,33 @@ export function isUserFacing(entrypoint) {
 const MAX_LINE = 65536;   // parse only reasonably-sized JSONL lines
 const MAX_SCAN = 1 << 20; // stop scanning a transcript after 1 MB
 
+// Claude Code records synthetic "user" messages that aren't real prompts: the
+// caveat banner and stdout of local slash-commands (/resume, /compact, …), bash
+// blocks, hook output, and injected system-reminders. Titling a session from
+// one of these shows "<local-command-caveat>Caveat…" instead of the actual
+// conversation — so we skip them and title from the first genuine prompt.
+const SYNTHETIC_PROMPT = /^<(local-command-caveat|command-name|command-message|command-args|command-contents|local-command-stdout|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook|system-reminder)\b/i;
+export function isSyntheticPrompt(text) {
+  const t = String(text ?? '').trim();
+  return !t || SYNTHETIC_PROMPT.test(t);
+}
+
+// Pasted/attached images render as "[Image #1]" or "[Image: source: <path>]" in
+// the transcript. The cache path is noise, so collapse any image token to a
+// short "[img]" marker and keep whatever real text accompanied it.
+const IMAGE_TOKEN = /\[image(?:\s*#\d+)?(?::[^\]]*)?\]/i;
+const IMAGE_TOKEN_G = /\[image(?:\s*#\d+)?(?::[^\]]*)?\]/gi;
+
+// The display title for a user message, or null when it carries no real prompt
+// (synthetic slash-command noise, whitespace, or an image with no caption).
+export function promptTitle(text) {
+  if (isSyntheticPrompt(text)) return null;
+  const hadImage = IMAGE_TOKEN.test(text);
+  const stripped = String(text).replace(IMAGE_TOKEN_G, ' ').replace(/\s+/g, ' ').trim();
+  if (stripped) return hadImage ? `[img] ${stripped}` : stripped;
+  return hadImage ? '[img]' : null;
+}
+
 // Best-effort metadata from the transcript head:
 // title — a compaction summary if present, else the first user message;
 // cwd — the directory the session belongs to (resume must run there);
@@ -107,8 +134,11 @@ export function sessionMeta(file) {
     if (!title && o?.type === 'summary' && o.summary) title = clean(o.summary);
     const msg = o?.message;
     if (!title && (o?.type === 'user' || msg?.role === 'user') && msg?.content) {
-      if (typeof msg.content === 'string') title = clean(msg.content);
-      else title = clean(msg.content.find?.((c) => c?.type === 'text')?.text ?? '');
+      let text = '';
+      if (typeof msg.content === 'string') text = msg.content;
+      else if (Array.isArray(msg.content)) text = msg.content.find?.((c) => c?.type === 'text')?.text ?? '';
+      const t = promptTitle(text);
+      if (t) title = clean(t);
     }
   };
   const CH = 65536;
@@ -141,12 +171,14 @@ export function sessionTitle(file) {
 
 // User-facing sessions for a slug (or all folders when slug is null), each with
 // metadata attached, newest first. Reads every candidate's head to classify by
-// entrypoint and filter out subagent/SDK transcripts — this is what makes the
-// count match Claude Code's own /resume.
-export function listSessions(slug = null, { includeSdk = false } = {}) {
+// entrypoint and filter out subagent/SDK transcripts (matching /resume) and
+// empty resume-shells — transcripts with no real prompt or summary, which would
+// otherwise pad the board as rows of "untitled".
+export function listSessions(slug = null, { includeSdk = false, includeEmpty = false } = {}) {
   return allSessions(slug)
     .map((s) => ({ ...s, ...sessionMeta(s.file) }))
-    .filter((s) => includeSdk || isUserFacing(s.entrypoint));
+    .filter((s) => includeSdk || isUserFacing(s.entrypoint))
+    .filter((s) => includeEmpty || s.title);
 }
 
 // Copy a session's transcript + artifacts into the target profile.
