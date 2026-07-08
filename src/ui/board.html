@@ -119,6 +119,12 @@
     border:1px solid var(--hair); border-radius:5px; padding:6px 8px;
   }
   .mini{padding:6px 14px; font-size:11.5px}
+  .mgroup{font-family:var(--mono); color:var(--ink); font-size:12px; letter-spacing:.14em; text-transform:uppercase; margin:16px 0 2px}
+  #mcp .srow{grid-template-columns:1fr auto}
+  #mcp .srow:first-of-type{border-top:none}
+  .mtag{font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:.12em; margin-left:10px; padding:1px 7px; border:1px solid var(--hair); border-radius:4px}
+  #mcp .act .to{color:var(--amber)}
+  #mcp .act.muted{color:var(--muted); font-size:12px; font-family:var(--mono)}
   .drow{display:flex; gap:10px; align-items:baseline; padding:6px 8px; font-size:13px}
   .drow .lamp{font-family:var(--mono); width:1.2em}
   .lamp.ok{color:var(--good)} .lamp.warn{color:var(--amber)} .lamp.err{color:var(--crit)}
@@ -163,6 +169,12 @@
       <button class="board-btn mini scope-btn" id="scope-all" onclick="setScope('all')">All folders</button>
     </div>
     <div id="sessions"></div>
+  </section>
+
+  <section>
+    <h2>MCP SERVERS</h2>
+    <p class="hint">Each account's own MCP servers (user- and project-scoped). Copy one into another account — pick the target and whether it lands everywhere (user) or only in its project folder (local). Shared servers are already in every account.</p>
+    <div id="mcp"></div>
   </section>
 
   <section>
@@ -327,6 +339,38 @@ function renderSessions(){
   });
 }
 
+function baseName(p){ return p?String(p).split(/[\\/]/).filter(Boolean).pop():''; }
+let mcpIndex=[];
+function renderMcp(){
+  const el=$('#mcp'); if(!el) return;
+  const accts=(state.mcp||[]).filter(a=>a.servers.length);
+  if(!accts.length){
+    el.innerHTML=`<div class="empty">No account-specific MCP servers yet. Add one with <code>claude mcp add</code> in an account, then copy it here.</div>`;
+    return;
+  }
+  mcpIndex=[]; let html='';
+  for(const a of accts){
+    html+=`<div class="mgroup"><span style="color:${a.hue}">●</span> ${esc(a.name)}</div>`;
+    const targets=state.profiles.filter(p=>p.name!==a.name);
+    for(const s of a.servers){
+      const idx=mcpIndex.length; mcpIndex.push({from:a.name,name:s.name});
+      const tag=s.scope==='local'?`local · ${esc(baseName(s.project))}`:'user';
+      if(!targets.length){ html+=`<div class="srow"><span class="title">${esc(s.name)} <span class="mtag">${tag}</span></span><span class="act muted">add a second account to copy</span></div>`; continue; }
+      const localLabel=esc(s.scope==='local'?`local · ${baseName(s.project)}`:`local · ${baseName(state.cwd)}`);
+      html+=`<div class="srow">
+        <span class="title">${esc(s.name)} <span class="mtag">${tag}</span></span>
+        <span class="act">
+          <span class="to">→</span>
+          <select id="mcpto-${idx}">${targets.map(t=>`<option>${esc(t.name)}</option>`).join('')}</select>
+          <select id="mcpscope-${idx}"><option value="user">user · everywhere</option><option value="local"${s.scope==='local'?' selected':''}>${localLabel}</option></select>
+          <button class="board-btn mini" onclick="copyMcp(${idx})">Copy</button>
+        </span>
+      </div>`;
+    }
+  }
+  el.innerHTML=html;
+}
+
 // ── actions ────────────────────────────────────────────────────────────
 async function api(p,body){ const r=await fetch(p,body?{method:'POST',body:JSON.stringify(body)}:{}); return r.json(); }
 function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),3200); }
@@ -339,9 +383,18 @@ async function transfer(id){
   await api('/api/launch',{name:to,resume:id,dir:s?.dir});
   toast(`Transferred ${id.slice(0,8)} → ${to} · opened in Windows Terminal`);
 }
+async function copyMcp(idx){
+  const m=mcpIndex[idx]; if(!m) return;
+  const to=$('#mcpto-'+idx).value, scope=$('#mcpscope-'+idx).value;
+  const r=await api('/api/mcp/copy',{from:m.from,to,name:m.name,scope});
+  if(r.error) return toast(r.error);
+  const where=r.scope==='local'?`local · ${baseName(r.project)}`:'user';
+  toast(`${r.replaced?'Replaced':'Copied'} ${m.name} → ${to} (${where})`);
+  await load();
+}
 async function refreshUsage(btn){
   btn.disabled=true; btn.textContent='Refreshing…';
-  try{ state=await api('/api/refresh',{scope}); renderBoard(); renderSessions(); stamp(); }
+  try{ state=await api('/api/refresh',{scope}); renderBoard(); renderSessions(); renderMcp(); stamp(); }
   finally{ btn.disabled=false; btn.textContent='Refresh usage'; }
 }
 async function runDoctor(){
@@ -362,7 +415,7 @@ function stamp(){ $('#updated').textContent='updated '+new Date().toTimeString()
 async function load(force){
   // Fetch live usage the moment the board opens; polls read the cache.
   state = force ? await api('/api/refresh',{scope}) : await api('/api/state?scope='+scope);
-  renderBoard(); renderSessions(); stamp();
+  renderBoard(); renderSessions(); renderMcp(); stamp();
 }
 load(true);
 setInterval(load, 20000);

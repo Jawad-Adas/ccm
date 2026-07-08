@@ -12,6 +12,7 @@ import { isRunning, launchProfile } from '../launch.js';
 import { sortByHeadroom } from '../picker.js';
 import os from 'node:os';
 import { slugForPath, listSessions, copySessionTo } from '../sessions.js';
+import { listAccountServers, copyServer } from '../mcp.js';
 import { collectDoctor } from '../doctor.js';
 import { timeAgo, timeUntil } from '../util.js';
 
@@ -103,7 +104,7 @@ export function renderBoard(state, w, h) {
   }
 
   c.put(2, h - 2, '─'.repeat(w - 4), S.seam);
-  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'board'], ['a', 'add account'], ['s', 'departures'], ['r', 'refresh'], ['d', 'doctor'], ['q', 'quit']]);
+  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'launch'], ['a', 'add'], ['s', 'departures'], ['x', 'mcp'], ['r', 'refresh'], ['d', 'doctor'], ['q', 'quit']]);
   return c;
 }
 
@@ -225,6 +226,55 @@ export function renderDoctor(state, w, h) {
   return c;
 }
 
+const baseName = (p) => (p ? p.split(/[\\/]/).filter(Boolean).pop() : '');
+
+function drawMcpAccount(c, y, w, row) {
+  c.put(2, y, '●', { fg: hueOf(row.color) });
+  c.put(4, y, row.name.toUpperCase(), S.inkB);
+  const meta = row.count ? `${row.count} SERVER${row.count === 1 ? '' : 'S'}` : 'SHARED ONLY';
+  c.put(w - 2 - meta.length, y, meta, S.muted);
+}
+
+function drawMcpServer(c, y, w, row, selMark) {
+  c.put(4, y, selMark ? '▌' : ' ', S.amberB);
+  c.put(6, y, '›', S.muted);
+  c.put(8, y, row.name.slice(0, 26).padEnd(26), selMark ? S.inkB : S.ink);
+  const tag = row.scope === 'local' ? `local · ${baseName(row.project)}` : 'user · everywhere';
+  c.put(36, y, tag.slice(0, Math.max(0, w - 40)), selMark ? S.amber : S.muted);
+}
+
+// MCP view: each account with its own (user/local) servers; pick one to copy
+// into another account. Only server rows are selectable.
+export function renderMcp(state, w, h) {
+  const c = new Canvas(w, h);
+  const rows = state.mcpRows ?? [];
+  c.put(2, 0, 'MCP SERVERS', S.amberB);
+  if (state.msg) c.put(14, 0, state.msg.slice(0, w - 26), S.ink2);
+  else c.put(14, 0, 'COPY BETWEEN ACCOUNTS', S.muted);
+  c.put(w - 2 - state.clock.length, 0, state.clock, S.amberB);
+  c.put(2, 1, '─'.repeat(w - 4), S.seam);
+  const servers = rows.filter((r) => r.type === 'server').length;
+  if (!servers) {
+    c.put(4, 3, 'NO ACCOUNT-SPECIFIC MCP SERVERS', S.inkB);
+    c.put(4, 5, 'Servers you add with `claude mcp add` show up here, ready to copy.', S.ink2);
+    c.put(4, 6, 'Shared servers are already injected into every account.', S.ink2);
+  }
+  const viewH = h - 6;
+  const top = state.scrollTop ?? 0;
+  for (let i = 0; i < viewH && top + i < rows.length; i++) {
+    const row = rows[top + i];
+    const y = 3 + i;
+    const selMark = top + i === state.sel;
+    if (row.type === 'account') drawMcpAccount(c, y, w, row);
+    else drawMcpServer(c, y, w, row, selMark);
+  }
+  if (top > 0) c.put(w - 4, 2, '▲', S.muted);
+  if (top + viewH < rows.length) c.put(w - 4, h - 3, `▼ ${rows.length - top - viewH}`, S.muted);
+  c.put(2, h - 2, '─'.repeat(w - 4), S.seam);
+  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'copy →'], ['esc', 'board']]);
+  return c;
+}
+
 function drawBox(c, w, h, ow, oh) {
   const x0 = Math.max(1, ((w - ow) / 2) | 0);
   const y0 = Math.max(1, ((h - oh) / 2) | 0);
@@ -249,6 +299,28 @@ function drawOverlay(c, w, h, state) {
       c.put(x0 + 4, y, '●', { fg: hueOf(t.color) });
       c.put(x0 + 6, y, t.name.toUpperCase(), i === o.sel ? S.inkB : S.ink);
     });
+    return;
+  }
+  if (o.kind === 'mcp-target') {
+    const { x0, y0 } = drawBox(c, w, h, 48, o.targets.length + 4);
+    c.put(x0 + 2, y0 + 1, `COPY ${o.server.name.toUpperCase()} TO`.slice(0, 44), S.amberB);
+    o.targets.forEach((t, i) => {
+      const y = y0 + 2 + i;
+      c.put(x0 + 2, y, i === o.sel ? '▌' : ' ', S.amberB);
+      c.put(x0 + 4, y, '●', { fg: hueOf(t.color) });
+      c.put(x0 + 6, y, t.name.toUpperCase(), i === o.sel ? S.inkB : S.ink);
+    });
+    return;
+  }
+  if (o.kind === 'mcp-scope') {
+    const { x0, y0 } = drawBox(c, w, h, 56, o.options.length + 5);
+    c.put(x0 + 2, y0 + 1, `${o.server.name.toUpperCase()} → ${o.to.toUpperCase()} — SCOPE`.slice(0, 52), S.amberB);
+    o.options.forEach((opt, i) => {
+      const y = y0 + 3 + i;
+      c.put(x0 + 2, y, i === o.sel ? '▌' : ' ', S.amberB);
+      c.put(x0 + 4, y, opt.label.slice(0, 50), i === o.sel ? S.inkB : S.ink);
+    });
+    c.put(x0 + 2, y0 + o.options.length + 3, 'enter copy · esc back', S.seam);
     return;
   }
   if (o.kind === 'add-name') {
@@ -393,6 +465,7 @@ class App {
     if (this.view === 'board') return this.keyBoard(k);
     if (this.view === 'sessions') return this.keySessions(k);
     if (this.view === 'doctor') return this.keyDoctor(k);
+    if (this.view === 'mcp') return this.keyMcp(k);
   }
 
   move(delta, count) {
@@ -423,6 +496,12 @@ class App {
       this.render();
       collectDoctor().then((d) => { this.doctor = d; if (this.view === 'doctor') this.render(); });
       return;
+    }
+    if (k === 'x') {
+      this.view = 'mcp';
+      this.loadMcp();
+      this.cascade = new Cascade();
+      return this.render();
     }
     if (k === 'enter' && this.profiles[this.sel]) return this.launch(this.profiles[this.sel].name);
     if (/^[1-9]$/.test(k) && +k <= this.profiles.length) return this.launch(this.profiles[+k - 1].name);
@@ -466,6 +545,92 @@ class App {
     }
   }
 
+  loadMcp() {
+    const rows = [];
+    for (const p of listProfiles()) {
+      const own = listAccountServers(p.name);
+      rows.push({ type: 'account', name: p.name, color: p.color, count: own.length });
+      for (const s of own) {
+        rows.push({ type: 'server', account: p.name, color: p.color, name: s.name, scope: s.scope, project: s.project ?? null });
+      }
+    }
+    this.mcpRows = rows;
+    const first = rows.findIndex((r) => r.type === 'server');
+    this.sel = first < 0 ? 0 : first;
+    this.scrollTop = 0;
+  }
+
+  moveMcp(delta) {
+    const rows = this.mcpRows ?? [];
+    if (!rows.length) return;
+    let i = this.sel;
+    for (let n = 0; n < rows.length; n++) {
+      i = (i + delta + rows.length) % rows.length;
+      if (rows[i].type === 'server') { this.sel = i; break; }
+    }
+    this.ensureVisible();
+    this.render();
+  }
+
+  keyMcp(k) {
+    if (k === 'esc' || k === 'q') { this.view = 'board'; this.sel = 0; return this.render(); }
+    if (k === 'up' || k === 'k') return this.moveMcp(-1);
+    if (k === 'down' || k === 'j') return this.moveMcp(1);
+    const row = (this.mcpRows ?? [])[this.sel];
+    if (!row || row.type !== 'server') return;
+    if (k === 'enter' || k === 'c') return this.openMcpCopy(row);
+  }
+
+  openMcpCopy(server) {
+    const targets = listProfiles().filter((p) => p.name !== server.account);
+    if (!targets.length) { this.msg = 'ADD A SECOND ACCOUNT TO COPY MCP SERVERS'; return this.render(); }
+    this.overlay = { kind: 'mcp-target', server, targets, sel: 0 };
+    this.render();
+  }
+
+  keyMcpTarget(k) {
+    const o = this.overlay;
+    if (k === 'esc' || k === 'q') { this.overlay = null; return this.render(); }
+    if (k === 'up' || k === 'k') { o.sel = (o.sel - 1 + o.targets.length) % o.targets.length; return this.render(); }
+    if (k === 'down' || k === 'j') { o.sel = (o.sel + 1) % o.targets.length; return this.render(); }
+    if (k === 'enter') {
+      const to = o.targets[o.sel].name;
+      // Default the local project from the source (local server) or current folder.
+      const project = o.server.scope === 'local' ? o.server.project : this.cwd;
+      const options = [
+        { scope: 'user', label: 'user · every folder for this account' },
+        { scope: 'local', project, label: `local · only in ${baseName(project)}` },
+      ];
+      this.overlay = { kind: 'mcp-scope', server: o.server, to, options, sel: o.server.scope === 'local' ? 1 : 0 };
+      return this.render();
+    }
+  }
+
+  keyMcpScope(k) {
+    const o = this.overlay;
+    if (k === 'esc' || k === 'q') {
+      this.overlay = { kind: 'mcp-target', server: o.server, targets: listProfiles().filter((p) => p.name !== o.server.account), sel: 0 };
+      return this.render();
+    }
+    if (k === 'up' || k === 'k') { o.sel = (o.sel - 1 + o.options.length) % o.options.length; return this.render(); }
+    if (k === 'down' || k === 'j') { o.sel = (o.sel + 1) % o.options.length; return this.render(); }
+    if (k === 'enter') {
+      const opt = o.options[o.sel];
+      const res = copyServer({
+        from: o.server.account, name: o.server.name,
+        sourceScope: o.server.scope, sourceProject: o.server.project,
+        to: o.to, targetScope: opt.scope, targetProject: opt.project ?? null,
+      });
+      this.overlay = null;
+      if (res.error) { this.msg = res.error.toUpperCase(); return this.render(); }
+      const where = opt.scope === 'local' ? `LOCAL · ${baseName(opt.project)}` : 'USER';
+      this.msg = `${res.replaced ? 'REPLACED' : 'COPIED'} ${o.server.name.toUpperCase()} → ${o.to.toUpperCase()} (${where})`;
+      this.loadMcp();
+      this.cascade = new Cascade();
+      return this.render();
+    }
+  }
+
   openTransfer(session) {
     const targets = listProfiles().filter((p) => !(session.source.kind === 'profile' && p.name === session.source.label));
     if (!targets.length) return;
@@ -477,6 +642,8 @@ class App {
     const o = this.overlay;
     if (o.kind === 'add-name') return this.keyAddName(k, raw);
     if (o.kind === 'add-method') return this.keyAddMethod(k);
+    if (o.kind === 'mcp-target') return this.keyMcpTarget(k);
+    if (o.kind === 'mcp-scope') return this.keyMcpScope(k);
     if (k === 'esc' || k === 'q') { this.overlay = null; return this.render(); }
     if (k === 'up' || k === 'k') { o.sel = (o.sel - 1 + o.targets.length) % o.targets.length; return this.render(); }
     if (k === 'down' || k === 'j') { o.sel = (o.sel + 1) % o.targets.length; return this.render(); }
@@ -556,11 +723,12 @@ class App {
     const state = {
       profiles: this.profiles, cache: this.cache, sel: this.sel, clock: this.clock(),
       msg: this.msg, spin: this.spin, rows: this.rows, total: this.sessions?.length,
-      scrollTop: this.scrollTop, doctor: this.doctor,
+      scrollTop: this.scrollTop, doctor: this.doctor, mcpRows: this.mcpRows,
       cwd: this.cwd, scope: this.scope, overlay: this.overlay,
     };
     const c = this.view === 'sessions' ? renderSessions(state, w, h)
       : this.view === 'doctor' ? renderDoctor(state, w, h)
+      : this.view === 'mcp' ? renderMcp(state, w, h)
       : renderBoard(state, w, h);
     if (this.overlay) drawOverlay(c, w, h, state);
     const now = Date.now();

@@ -12,6 +12,7 @@ import { getUsage, refreshAll, headroom, isStale } from '../usage.js';
 import { isRunning } from '../launch.js';
 import os from 'node:os';
 import { slugForPath, allSessions, listSessions, copySessionTo } from '../sessions.js';
+import { listAccountServers, copyServer, resolveCopyTarget } from '../mcp.js';
 import { collectDoctor } from '../doctor.js';
 import { HUES } from '../tui/theme.js';
 
@@ -50,13 +51,20 @@ async function stateJson(cwd, scope = 'here') {
     };
   }));
   profiles.sort((a, b) => (b.headroom ?? -1) - (a.headroom ?? -1));
+  const mcp = listProfiles().map((p) => ({
+    name: p.name, hue: HUES[p.color] ?? '#C3C2B7',
+    servers: listAccountServers(p.name).map((s) => ({
+      name: s.name, scope: s.scope, project: s.project ?? null,
+      projectShort: s.project ? shortDir(s.project) : null,
+    })),
+  }));
   const sessions = listSessions(scope === 'all' ? null : slugForPath(cwd)).slice(0, scope === 'all' ? 200 : 20)
     .map((s) => ({
       id: s.id, mtime: s.mtime, title: s.title,
       dir: s.cwd, dirShort: shortDir(s.cwd) ?? s.slug,
       source: { kind: s.source.kind, label: s.source.label, hue: HUES[s.source.color] ?? null },
     }));
-  return { profiles, sessions, scope, cwd, now: Date.now() };
+  return { profiles, mcp, sessions, scope, cwd, now: Date.now() };
 }
 
 function openTerminal(args, dir = null) {
@@ -97,6 +105,15 @@ export function startUi({ port = 7788, open = true, cwd = process.cwd() } = {}) 
           if (body.resume) args.push('--resume', String(body.resume));
           openTerminal(args, body.dir && fs.existsSync(body.dir) ? body.dir : null);
           return json(res, { ok: true });
+        }
+        if (u.pathname === '/api/mcp/copy') {
+          if (!getProfile(body.from)) return json(res, { error: `unknown profile "${body.from}"` }, 400);
+          if (!getProfile(body.to)) return json(res, { error: `unknown profile "${body.to}"` }, 400);
+          if (body.scope && body.scope !== 'user' && body.scope !== 'local') return json(res, { error: 'scope must be user or local' }, 400);
+          const t = resolveCopyTarget({ from: body.from, name: body.name, scope: body.scope, project: body.project }, cwd);
+          const r = copyServer({ from: body.from, name: body.name, sourceScope: t.sourceScope, sourceProject: t.sourceProject, to: body.to, targetScope: t.targetScope, targetProject: t.targetProject });
+          if (r.error) return json(res, { error: r.error }, 400);
+          return json(res, { ok: true, replaced: r.replaced, scope: r.scope, project: r.project });
         }
         if (u.pathname === '/api/move') {
           if (!getProfile(body.to)) return json(res, { error: `unknown profile "${body.to}"` }, 400);

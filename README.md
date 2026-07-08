@@ -49,6 +49,7 @@ Requires Node 18+ and Claude Code on PATH. **Zero dependencies.** Your `~/.claud
 - **Quota-aware picker.** Accounts sort most-headroom-first, so picking the account with room is the default gesture — switching stays your explicit choice.
 - **Move a session across accounts.** Hit a limit mid-conversation? `ccm move-session personal` copies the session to another account and resumes it there. The original stays put.
 - **Configure once.** Shared `settings.json`, `CLAUDE.md`, skills, agents, and MCP servers are composed into every profile at launch, with per-profile overrides (`ccm override work model=opus`).
+- **Copy MCP servers between accounts.** Set up an MCP server once and copy it to another account — from the board (`x`), the web dashboard, or `ccm mcp copy`. Reads the real `.claude.json` locations, so both user- and project-scoped servers show up; you choose where each copy lands (everywhere, or local to a project).
 - **Shared auto-memory.** What Claude learns about a repo is pooled across accounts — the memory follows the project, not the login.
 - **Inside Claude Code too.** `ccm statusline install` shows `● work · 5h 43% · wk 12%` in your session — and when you near a limit, a `→ ccm move-session <best>` escape hatch right where you're looking.
 - **Windows toasts** when any account crosses 80% / 95%, and again when a limit resets ("fresh again").
@@ -80,6 +81,7 @@ Requires Node 18+ and Claude Code on PATH. **Zero dependencies.** Your `~/.claud
 | `ccm move-session <to> [id]` | Copy the latest session for this folder (or a given id) to another account and resume it there |
 | `ccm override <name> [key=value…]` | Per-profile settings merged over the shared layer at launch |
 | `ccm mcp list / share / unshare` | Shared MCP servers injected into every profile; a profile's own servers always win |
+| `ccm mcp copy <name> --from <p> --to <p> [--scope user\|local]` | Copy one account's MCP server (user- or project-scoped) to another account — also on the board (`x`) and web dashboard |
 | `ccm doctor` | Health check: claude binary, tokens, junctions (auto-repairs), stale locks, integrations |
 | `ccm notify on\|off\|test` | Windows toasts on 80% / 95% and on limit reset |
 | `ccm wt install` | One Windows Terminal profile per account, colored tabs, auto-synced |

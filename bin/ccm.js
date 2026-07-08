@@ -25,7 +25,7 @@ import { slugForPath, findSession, copySessionTo } from '../src/sessions.js';
 import { diffNotifications, notificationsEnabled, setNotificationsEnabled, sendToast } from '../src/notify.js';
 import { installWt, uninstallWt, wtDetected, wtInstalled, wtInSync, refreshWtIfInstalled } from '../src/wt.js';
 import { runDoctor } from '../src/doctor.js';
-import { mcpList, mcpShare, mcpUnshare } from '../src/mcp.js';
+import { mcpList, mcpShare, mcpUnshare, parseMcpCopy, resolveCopyTarget, copyServer } from '../src/mcp.js';
 
 const VERSION = readJson(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), {}).version ?? '?';
 
@@ -225,7 +225,24 @@ async function mcpCmd(args) {
     console.log(`${colorize('green', '✔')} "${name}" unshared — removed from profiles on their next launch`);
     return 0;
   }
-  fail('usage: ccm mcp [list | share <name> [--from <profile>] | unshare <name>]');
+  if (sub === 'copy') {
+    const o = parseMcpCopy(args.slice(1));
+    if (!o.name || !o.from || !o.to) {
+      fail('usage: ccm mcp copy <server> --from <profile> --to <profile> [--scope user|local] [--project <path>]');
+    }
+    if (!getProfile(o.from)) fail(`unknown profile "${o.from}"`);
+    if (!getProfile(o.to)) fail(`unknown profile "${o.to}"`);
+    if (o.scope && o.scope !== 'user' && o.scope !== 'local') fail('--scope must be "user" or "local"');
+    const t = resolveCopyTarget(o, process.cwd());
+    const res = copyServer({ from: o.from, name: o.name, sourceScope: t.sourceScope, sourceProject: t.sourceProject, to: o.to, targetScope: t.targetScope, targetProject: t.targetProject });
+    if (res.error) fail(res.error);
+    const where = res.scope === 'local' ? `local: ${res.project}` : 'user (everywhere)';
+    const verb = res.replaced ? 'replaced' : 'copied';
+    console.log(`${colorize('green', '✔')} ${verb} "${o.name}" ${o.from} → ${o.to} (${where})`);
+    if (res.scope === 'local') console.log(dim('   loads when you run that account in that folder'));
+    return 0;
+  }
+  fail('usage: ccm mcp [list | share <name> [--from <profile>] | unshare <name> | copy <name> --from <p> --to <p> [--scope user|local] [--project <path>]]');
 }
 
 function renderNoProfiles() {
@@ -364,8 +381,10 @@ ${bold('Per-profile config')} ${dim('(merged over the shared layer at launch)')}
                           ~/.ccm/overrides/<name>.CLAUDE.md is appended to shared CLAUDE.md
                           memory=private|shared opts an account out of / into the pooled
                           per-project auto-memory (shared is the default)
-  ccm mcp list            shared vs per-profile MCP servers
+  ccm mcp list            shared + each account's user/local MCP servers
   ccm mcp share <name> [--from <profile>] / unshare <name>
+  ccm mcp copy <name> --from <p> --to <p> [--scope user|local] [--project <path>]
+                          copy one account's MCP server to another account
 
 ${bold('Pinning & Windows Terminal')}
   ccm pin <name>          this folder (and below) always uses that account

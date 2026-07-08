@@ -8,7 +8,7 @@ process.env.CCM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ccm-tui-'));
 process.env.NO_COLOR = '1';
 const { Canvas } = await import('../src/tui/term.js');
 const { Cascade, meterCells, drawMeter, METER_TILES } = await import('../src/tui/flap.js');
-const { renderBoard, renderSessions, buildSessionRows } = await import('../src/tui/app.js');
+const { renderBoard, renderSessions, buildSessionRows, renderMcp } = await import('../src/tui/app.js');
 
 test('Canvas puts text and clips at edges', () => {
   const c = new Canvas(10, 2);
@@ -90,7 +90,60 @@ test('renderBoard empty state invites setup', () => {
   const text = renderBoard({ profiles: [], cache: {}, sel: 0, clock: '12:00:00' }, 90, 24).toText();
   assert.match(text, /NO ACCOUNTS ON THE BOARD/);
   assert.match(text, /add your first account/);
-  assert.match(text, /add account/); // keybar
+  assert.match(text, /a add/); // keybar
+});
+
+test('renderMcp lists servers with scope tags and shows copy confirmation', () => {
+  const rows = [
+    { type: 'account', name: 'gasable', color: 'cyan', count: 2 },
+    { type: 'server', account: 'gasable', color: 'cyan', name: 'cloudflare', scope: 'user', project: null },
+    { type: 'server', account: 'gasable', color: 'cyan', name: 'supabase-staging', scope: 'local', project: 'C:/proj/supplier' },
+    { type: 'account', name: 'personal', color: 'magenta', count: 0 },
+  ];
+  const text = renderMcp({ mcpRows: rows, sel: 1, scrollTop: 0, clock: '12:00:00', msg: null }, 100, 24).toText();
+  assert.match(text, /MCP SERVERS/);
+  assert.match(text, /cloudflare/);
+  assert.match(text, /user . everywhere/);
+  assert.match(text, /supabase-staging/);
+  assert.match(text, /local . supplier/);      // basename tag
+  assert.match(text, /SHARED ONLY/);           // account with no own servers
+  const withMsg = renderMcp({ mcpRows: rows, sel: 1, scrollTop: 0, clock: '12:00:00', msg: 'COPIED CLOUDFLARE → PERSONAL (USER)' }, 100, 24).toText();
+  assert.match(withMsg, /COPIED CLOUDFLARE/);
+});
+
+test('MCP copy flow: server → target overlay → scope overlay → copyServer', async () => {
+  const { App } = await import('../src/tui/app.js');
+  const { registerProfile } = await import('../src/registry.js');
+  const { listAccountServers } = await import('../src/mcp.js');
+  const { profileDir } = await import('../src/paths.js');
+  registerProfile('mfrom');
+  registerProfile('mto');
+  fs.mkdirSync(profileDir('mfrom'), { recursive: true });
+  fs.mkdirSync(profileDir('mto'), { recursive: true });
+  fs.writeFileSync(path.join(profileDir('mfrom'), '.claude.json'),
+    JSON.stringify({ mcpServers: { cloudflare: { url: 'https://cf' } } }));
+
+  const app = Object.create(App.prototype);
+  app.view = 'mcp';
+  app.cwd = 'C:/work/here';
+  app.overlay = null;
+  app.render = () => {};
+  app.cascade = null;
+  app.loadMcp();
+  // land on the cloudflare server row and open the copy flow
+  app.sel = app.mcpRows.findIndex((r) => r.type === 'server' && r.name === 'cloudflare');
+  app.keyMcp('enter');
+  assert.equal(app.overlay.kind, 'mcp-target');
+  // choose target "mto"
+  app.overlay.sel = app.overlay.targets.findIndex((t) => t.name === 'mto');
+  app.keyMcpTarget('enter');
+  assert.equal(app.overlay.kind, 'mcp-scope');
+  // pick "user" scope (option 0) and confirm
+  app.overlay.sel = 0;
+  app.keyMcpScope('enter');
+  assert.equal(app.overlay, null);
+  assert.match(app.msg, /COPIED CLOUDFLARE/);
+  assert.ok(listAccountServers('mto').some((s) => s.name === 'cloudflare' && s.scope === 'user'));
 });
 
 test('add-account overlay: name input → method choice → validation errors', async () => {
