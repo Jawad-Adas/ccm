@@ -55,13 +55,14 @@ test('renderBoard shows accounts, meters and keybar headlessly', () => {
     },
     sel: 0, clock: '12:00:00', msg: null, spin: false,
   };
-  const text = renderBoard(state, 100, 30).toText();
+  const text = renderBoard(state, 112, 30).toText();
   assert.match(text, /GASABLE/);
   assert.match(text, /PERSONAL/);
   assert.match(text, /C L A U D E {3}C O D E {3}A C C O U N T {3}B O A R D/);
   assert.match(text, /50%/);
   assert.match(text, /RESETS/);
   assert.match(text, /no usage data/);
+  assert.match(text, /- remove/);
   assert.match(text, /doctor/);
 });
 
@@ -91,6 +92,62 @@ test('renderBoard empty state invites setup', () => {
   assert.match(text, /NO ACCOUNTS ON THE BOARD/);
   assert.match(text, /add your first account/);
   assert.match(text, /a add/); // keybar
+});
+
+test('renderBoard flags a logged-out account with a chip and keeps the login key', () => {
+  const state = {
+    profiles: [{ name: 'gasable', email: 'j@x.com', plan: 'team', color: 'cyan', loggedOut: true }],
+    cache: {}, sel: 0, clock: '12:00:00', msg: null, spin: false,
+  };
+  const text = renderBoard(state, 100, 30).toText();
+  assert.match(text, /LOGGED OUT/);
+  assert.match(text, /l login/); // keybar advertises the recovery key
+});
+
+test('App.launch refuses a logged-out account and prompts to sign in instead', async () => {
+  const { App } = await import('../src/tui/app.js');
+  const { registerProfile } = await import('../src/registry.js');
+  const { profileDir } = await import('../src/paths.js');
+  registerProfile('loout');
+  fs.mkdirSync(profileDir('loout'), { recursive: true });
+  fs.writeFileSync(path.join(profileDir('loout'), '.credentials.json'),
+    JSON.stringify({ claudeAiOauth: { accessToken: '', refreshToken: '', expiresAt: 0 } }));
+
+  const app = Object.create(App.prototype);
+  app.msg = null;
+  app.render = () => {};
+  app.launch('loout');
+  assert.match(app.msg, /LOGGED OUT/);
+  assert.match(app.msg, /PRESS L/);
+});
+
+test('remove flow: confirm overlay → executeRemove deletes the profile from the board', async () => {
+  const { App } = await import('../src/tui/app.js');
+  const { registerProfile, listProfiles } = await import('../src/registry.js');
+  const { profileDir } = await import('../src/paths.js');
+  registerProfile('doomed');
+  fs.mkdirSync(profileDir('doomed'), { recursive: true });
+
+  const app = Object.create(App.prototype);
+  app.overlay = null;
+  app.msg = null;
+  app.render = () => {};
+  app.cascade = null;
+
+  app.confirmRemove({ name: 'doomed', color: 'cyan', email: 'd@x.com' });
+  assert.equal(app.overlay.kind, 'remove-confirm');
+  assert.equal(app.overlay.name, 'doomed');
+  // esc cancels without deleting
+  app.keyRemove('esc');
+  assert.equal(app.overlay, null);
+  assert.ok(listProfiles().some((p) => p.name === 'doomed'));
+  // confirm with y actually removes it
+  app.confirmRemove({ name: 'doomed', color: 'cyan', email: 'd@x.com' });
+  app.keyRemove('y');
+  assert.equal(app.overlay, null);
+  assert.match(app.msg, /REMOVED DOOMED/);
+  assert.ok(!listProfiles().some((p) => p.name === 'doomed'));
+  assert.ok(!fs.existsSync(profileDir('doomed')));
 });
 
 test('renderMcp lists servers with scope tags and shows copy confirmation', () => {

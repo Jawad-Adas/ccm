@@ -5,10 +5,11 @@ import { Screen, Canvas } from './term.js';
 import { Cascade, WORDMARK, drawMeter, METER_TILES } from './flap.js';
 import { INK, INK2, MUTED, AMBER, GOOD, CRITICAL, hueOf, meterColor } from './theme.js';
 import { listProfiles, registerProfile, refreshIdentity } from '../registry.js';
-import { prepareProfileDir, hasDefaultLogin, importDefaultInto } from '../profiles.js';
+import { prepareProfileDir, hasDefaultLogin, importDefaultInto, removeProfile } from '../profiles.js';
 import { refreshWtIfInstalled } from '../wt.js';
 import { loadCache, refreshAll, headroom, ERROR_HINTS, DEFAULT_MAX_AGE_MS, isStale } from '../usage.js';
 import { isRunning, launchProfile } from '../launch.js';
+import { authState } from '../oauth.js';
 import { sortByHeadroom } from '../picker.js';
 import os from 'node:os';
 import { slugForPath, listSessions, copySessionTo } from '../sessions.js';
@@ -36,6 +37,7 @@ function isStaleUsage(usage) {
 }
 
 function chipFor(p, usage, isBest) {
+  if (p.loggedOut) return { text: '✕ LOGGED OUT', style: S.crit };
   if (isRunning(p.name)) return { text: '● IN SESSION', style: S.good };
   // Never assert FULL / MOST HEADROOM off data we couldn't refresh.
   if (isStaleUsage(usage)) return { text: '⟳ STALE', style: S.muted };
@@ -104,7 +106,7 @@ export function renderBoard(state, w, h) {
   }
 
   c.put(2, h - 2, '─'.repeat(w - 4), S.seam);
-  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'launch'], ['a', 'add'], ['s', 'departures'], ['x', 'mcp'], ['r', 'refresh'], ['d', 'doctor'], ['q', 'quit']]);
+  drawKeybar(c, h - 1, [['↑↓', 'select'], ['enter', 'launch'], ['l', 'login'], ['a', 'add'], ['-', 'remove'], ['s', 'departures'], ['x', 'mcp'], ['r', 'refresh'], ['d', 'doctor'], ['q', 'quit']]);
   return c;
 }
 
@@ -114,7 +116,7 @@ function drawKeybar(c, y, keys) {
     c.put(x, y, k, S.amber);
     x += k.length + 1;
     c.put(x, y, label, S.muted);
-    x += label.length + 3;
+    x += label.length + 2;
   }
 }
 
@@ -323,6 +325,14 @@ function drawOverlay(c, w, h, state) {
     c.put(x0 + 2, y0 + o.options.length + 3, 'enter copy · esc back', S.seam);
     return;
   }
+  if (o.kind === 'remove-confirm') {
+    const { x0, y0 } = drawBox(c, w, h, 54, 7);
+    c.put(x0 + 2, y0 + 1, `REMOVE ${o.name.toUpperCase()}?`, S.crit);
+    c.put(x0 + 2, y0 + 3, `● ${o.email ?? 'not logged in'}`.slice(0, 50), { fg: hueOf(o.color) });
+    c.put(x0 + 2, y0 + 4, 'deletes its login, sessions & history — cannot be undone', S.ink2);
+    c.put(x0 + 2, y0 + 6, 'y remove · esc cancel', S.seam);
+    return;
+  }
   if (o.kind === 'add-name') {
     const { x0, y0 } = drawBox(c, w, h, 52, o.error ? 7 : 6);
     c.put(x0 + 2, y0 + 1, 'NEW ACCOUNT — NAME', S.amberB);
@@ -391,7 +401,8 @@ class App {
 
   loadData() {
     this.cache = loadCache();
-    this.profiles = sortByHeadroom(listProfiles(), this.cache);
+    this.profiles = sortByHeadroom(listProfiles(), this.cache)
+      .map((p) => ({ ...p, loggedOut: authState(p.name) === 'logged-out' }));
     this.sel = Math.min(this.sel, Math.max(0, this.profiles.length - 1));
   }
 
@@ -446,6 +457,12 @@ class App {
   }
 
   launch(name, args = [], opts = {}) {
+    // A logged-out account would dead-end at Claude's login screen — surface it
+    // on the board and require an explicit "log in" (l) instead of launching blind.
+    if (opts.intent !== 'login' && authState(name) === 'logged-out') {
+      this.msg = `${name.toUpperCase()} LOGGED OUT — PRESS L TO SIGN IN`;
+      return this.render();
+    }
     clearInterval(this.timer);
     this.screen.leave();
     launchProfile(name, args, opts);
@@ -457,6 +474,10 @@ class App {
     this.loadData();
     this.cascade = new Cascade();
     this.render();
+  }
+
+  login(name) {
+    this.launch(name, [], { intent: 'login' });
   }
 
   key(k, raw) {
@@ -484,6 +505,9 @@ class App {
       this.overlay = { kind: 'add-name', value: '', error: null };
       return this.render();
     }
+    if ((k === '-' || k === 'delete' || k === 'backspace') && this.profiles[this.sel]) {
+      return this.confirmRemove(this.profiles[this.sel]);
+    }
     if (k === 's' || k === 'm') {
       this.view = 'sessions';
       this.loadSessions();
@@ -503,6 +527,7 @@ class App {
       this.cascade = new Cascade();
       return this.render();
     }
+    if (k === 'l' && this.profiles[this.sel]) return this.login(this.profiles[this.sel].name);
     if (k === 'enter' && this.profiles[this.sel]) return this.launch(this.profiles[this.sel].name);
     if (/^[1-9]$/.test(k) && +k <= this.profiles.length) return this.launch(this.profiles[+k - 1].name);
   }
@@ -642,6 +667,7 @@ class App {
     const o = this.overlay;
     if (o.kind === 'add-name') return this.keyAddName(k, raw);
     if (o.kind === 'add-method') return this.keyAddMethod(k);
+    if (o.kind === 'remove-confirm') return this.keyRemove(k);
     if (o.kind === 'mcp-target') return this.keyMcpTarget(k);
     if (o.kind === 'mcp-scope') return this.keyMcpScope(k);
     if (k === 'esc' || k === 'q') { this.overlay = null; return this.render(); }
@@ -670,6 +696,37 @@ class App {
       o.error = null;
       return this.render();
     }
+  }
+
+  confirmRemove(p) {
+    if (isRunning(p.name)) {
+      this.msg = `${p.name.toUpperCase()} HAS A RUNNING SESSION — CLOSE IT FIRST`;
+      return this.render();
+    }
+    this.overlay = { kind: 'remove-confirm', name: p.name, color: p.color, email: p.email };
+    return this.render();
+  }
+
+  keyRemove(k) {
+    const o = this.overlay;
+    if (k === 'esc' || k === 'q' || k === 'n') { this.overlay = null; return this.render(); }
+    if (k === 'y' || k === 'enter') return this.executeRemove(o.name);
+  }
+
+  executeRemove(name) {
+    try {
+      removeProfile(name);
+    } catch (e) {
+      this.overlay = null;
+      this.msg = e.message.toUpperCase();
+      return this.render();
+    }
+    this.overlay = null;
+    refreshWtIfInstalled();
+    this.loadData();
+    this.msg = `REMOVED ${name.toUpperCase()}`;
+    this.cascade = new Cascade();
+    return this.render();
   }
 
   keyAddMethod(k) {

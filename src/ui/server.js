@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { listProfiles, getProfile } from '../registry.js';
 import { getUsage, refreshAll, headroom, isStale } from '../usage.js';
 import { isRunning } from '../launch.js';
+import { authState } from '../oauth.js';
 import os from 'node:os';
 import { slugForPath, allSessions, listSessions, copySessionTo } from '../sessions.js';
 import { listAccountServers, copyServer, resolveCopyTarget } from '../mcp.js';
@@ -42,7 +43,7 @@ async function stateJson(cwd, scope = 'here') {
     return {
       name: p.name, email: p.email, plan: p.plan, organization: p.organization,
       color: p.color, hue: HUES[p.color] ?? '#C3C2B7',
-      running: isRunning(p.name), headroom: headroom(usage),
+      running: isRunning(p.name), loggedOut: authState(p.name) === 'logged-out', headroom: headroom(usage),
       windows: usage?.windows ?? null, usageError: usage?.error ?? null,
       stale: !!usage && (!!usage.staleError || isStale(usage)),
       staleError: usage?.staleError ?? null,
@@ -101,8 +102,10 @@ export function startUi({ port = 7788, open = true, cwd = process.cwd() } = {}) 
         }
         if (u.pathname === '/api/launch') {
           if (!getProfile(body.name)) return json(res, { error: `unknown profile "${body.name}"` }, 400);
-          const args = ['ccm', body.name];
-          if (body.resume) args.push('--resume', String(body.resume));
+          // A logged-out account opens `ccm login <name>` (goes straight to the
+          // sign-in flow) instead of `ccm <name>` (which would refuse to launch).
+          const args = body.login ? ['ccm', 'login', body.name] : ['ccm', body.name];
+          if (!body.login && body.resume) args.push('--resume', String(body.resume));
           openTerminal(args, body.dir && fs.existsSync(body.dir) ? body.dir : null);
           return json(res, { ok: true });
         }

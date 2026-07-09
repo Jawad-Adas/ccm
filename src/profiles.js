@@ -3,8 +3,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { profileDir, DEFAULT_CLAUDE_DIR, HOME_CLAUDE_JSON } from './paths.js';
-import { ensureShared, linkIntoProfile } from './shared.js';
+import { ensureShared, linkIntoProfile, unlinkShared } from './shared.js';
 import { composeProfile } from './compose.js';
+import { unregisterProfile } from './registry.js';
+import { isRunning } from './launch.js';
 
 // Session state that must travel with an import for --resume/--continue to
 // see past conversations: transcripts, prompt history, checkpoints, tasks.
@@ -21,6 +23,17 @@ export function prepareProfileDir(name) {
 
 export function hasDefaultLogin() {
   return fs.existsSync(path.join(DEFAULT_CLAUDE_DIR, '.credentials.json'));
+}
+
+// Delete a profile: unlink its shared junctions first (so the recursive delete
+// can't follow them into ~/.ccm/shared), remove its CLAUDE_CONFIG_DIR, then drop
+// it from the registry. Refuses while a session is live — its files are in use.
+export function removeProfile(name) {
+  if (isRunning(name)) throw new Error(`profile "${name}" has a running session — close it first`);
+  const dir = profileDir(name);
+  unlinkShared(dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+  unregisterProfile(name);
 }
 
 // Copy the default ~/.claude login (and optionally its session history)

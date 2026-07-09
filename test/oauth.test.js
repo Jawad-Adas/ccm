@@ -6,7 +6,7 @@ import path from 'node:path';
 
 process.env.CCM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ccm-oauth-'));
 process.env.CCM_CLAUDE_DIR = path.join(process.env.CCM_HOME, 'fake-claude');
-const { refreshToken, validOauth, resolveToken, readOauth } = await import('../src/oauth.js');
+const { refreshToken, validOauth, resolveToken, readOauth, authState, sameAccountValidSource } = await import('../src/oauth.js');
 const { profileDir } = await import('../src/paths.js');
 const { registerProfile } = await import('../src/registry.js');
 
@@ -97,4 +97,41 @@ test('resolveToken does not borrow across different accounts', async () => {
   writeCreds('dead2', { accessToken: 'x', expiresAt: Date.now() - 1000 }, { accountUuid: 'acct-A' });
   writeCreds('other', { accessToken: 'nope', expiresAt: Date.now() + 3_600_000 }, { accountUuid: 'acct-B' });
   assert.deepEqual(await resolveToken('dead2'), { error: 'token-expired' });
+});
+
+test('authState flags a wiped/empty token as logged-out', () => {
+  // the exact shape Claude Code writes when it clears creds on a failed refresh
+  writeCreds('wiped', { accessToken: '', refreshToken: '', expiresAt: 0 });
+  assert.equal(authState('wiped'), 'logged-out');
+});
+
+test('authState is logged-out when credentials are missing entirely', () => {
+  registerProfile('nocreds');
+  fs.mkdirSync(profileDir('nocreds'), { recursive: true });
+  assert.equal(authState('nocreds'), 'logged-out');
+});
+
+test('authState is ok for a valid token, and for an expired one that can still refresh', () => {
+  writeCreds('valid', { accessToken: 'good', refreshToken: 'r', expiresAt: Date.now() + 3_600_000 });
+  assert.equal(authState('valid'), 'ok');
+  // expired but has a refresh token → Claude Code refreshes on launch, still ok
+  writeCreds('refreshable', { accessToken: 'old', refreshToken: 'r', expiresAt: Date.now() - 1000 });
+  assert.equal(authState('refreshable'), 'ok');
+});
+
+test('authState is logged-out when the token is expired and there is no refresh token', () => {
+  writeCreds('stuck', { accessToken: 'old', expiresAt: Date.now() - 1000 });
+  assert.equal(authState('stuck'), 'logged-out');
+});
+
+test('sameAccountValidSource names another live login on the same account (the rotation culprit)', () => {
+  writeCreds('out', { accessToken: '', refreshToken: '', expiresAt: 0 }, { accountUuid: 'acct-Z' });
+  writeCreds('still-in', { accessToken: 'live', expiresAt: Date.now() + 3_600_000 }, { accountUuid: 'acct-Z' });
+  assert.equal(sameAccountValidSource('out'), 'still-in');
+});
+
+test('sameAccountValidSource returns null when no other source shares the account', () => {
+  writeCreds('lonely', { accessToken: '', refreshToken: '', expiresAt: 0 }, { accountUuid: 'acct-solo' });
+  writeCreds('unrelated', { accessToken: 'live', expiresAt: Date.now() + 3_600_000 }, { accountUuid: 'acct-different' });
+  assert.equal(sameAccountValidSource('lonely'), null);
 });

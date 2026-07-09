@@ -9,11 +9,10 @@ import {
 } from '../src/paths.js';
 import { colorize, bold, dim, timeAgo, readJson, writeJson, setDotted, unsetDotted } from '../src/util.js';
 import {
-  listProfiles, getProfile, registerProfile, unregisterProfile,
+  listProfiles, getProfile, registerProfile,
   refreshIdentity, validName, updateProfile,
 } from '../src/registry.js';
-import { unlinkShared } from '../src/shared.js';
-import { prepareProfileDir, hasDefaultLogin, importDefaultInto } from '../src/profiles.js';
+import { prepareProfileDir, hasDefaultLogin, importDefaultInto, removeProfile } from '../src/profiles.js';
 import { launchProfile, isRunning } from '../src/launch.js';
 import { findPin, writePin, removePin, PIN_FILE } from '../src/pin.js';
 import { gatherStatus, renderStatus } from '../src/status.js';
@@ -277,10 +276,22 @@ async function addCmd(args) {
   console.log(`Profile ${bold(name)} created.`);
   console.log('Launching Claude Code for its first login — sign in to the account you want,');
   console.log(`then exit (${dim('/exit')}) to finish registration.\n`);
-  const code = launchProfile(name, []);
+  const code = launchProfile(name, [], { intent: 'login' });
   const p = refreshIdentity(name);
   if (p?.email) console.log(`\n${colorize('green', '✔')} ${bold(name)} registered as ${bold(p.email)} (${p.plan ?? 'unknown plan'})`);
   else console.log(`\n${colorize('yellow', '!')} No login detected yet — launch it later with ${bold(`ccm ${name}`)} and run /login.`);
+  return code;
+}
+
+async function loginCmd(args) {
+  const name = args[0];
+  if (!name) fail('usage: ccm login <name>');
+  if (!getProfile(name)) fail(`unknown profile "${name}" — run: ccm list`);
+  console.log(`Signing in to ${bold(name)} — complete the login in Claude Code, then ${dim('/exit')}.\n`);
+  const code = launchProfile(name, args.slice(1), { intent: 'login' });
+  const p = refreshIdentity(name);
+  if (p?.email) console.log(`\n${colorize('green', '✔')} ${bold(name)} logged in as ${bold(p.email)} (${p.plan ?? 'unknown plan'})`);
+  else console.log(`\n${colorize('yellow', '!')} No login detected yet — re-run ${bold(`ccm login ${name}`)} and complete /login.`);
   return code;
 }
 
@@ -310,10 +321,7 @@ async function removeCmd(args) {
     const a = await ask(`Delete profile "${name}" and its credentials/history? [y/N] `);
     if (!/^y(es)?$/i.test(a)) { console.log('aborted'); return 0; }
   }
-  const dir = profileDir(name);
-  unlinkShared(dir);
-  fs.rmSync(dir, { recursive: true, force: true });
-  unregisterProfile(name);
+  removeProfile(name);
   console.log(`${colorize('green', '✔')} removed ${bold(name)}`);
   return 0;
 }
@@ -361,6 +369,7 @@ ${bold('Accounts')}
   ccm import [name]       adopt your current ~/.claude login as a profile, incl. session
                           history so --resume sees past chats (default: main; --no-history to skip)
   ccm add <name>          create a profile and log in to another account
+  ccm login <name>        sign back in to a profile whose saved token was cleared
   ccm list                all profiles at a glance
   ccm remove <name>       delete a profile (asks first; --yes to skip)
 
@@ -406,6 +415,7 @@ try {
     case undefined: exitCode = await defaultAction(); break;
     case 'pick': exitCode = await pickAndLaunch(listProfiles()); break;
     case 'add': exitCode = await addCmd(rest); refreshWtIfInstalled(); break;
+    case 'login': exitCode = await loginCmd(rest); refreshWtIfInstalled(); break;
     case 'import': exitCode = await importCmd(rest); refreshWtIfInstalled(); break;
     case 'list': case 'ls': console.log(renderList(listProfiles())); break;
     case 'remove': case 'rm': exitCode = await removeCmd(rest); refreshWtIfInstalled(); break;

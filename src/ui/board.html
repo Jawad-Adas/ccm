@@ -246,6 +246,7 @@ function ago(t){
   return Math.floor(m/1440)+'d ago';
 }
 function chip(p){
+  if(p.loggedOut) return '<span class="chip crit">✕ LOGGED OUT</span>';
   if(p.running) return '<span class="chip good">● IN SESSION</span>';
   if(p.stale) return '<span class="chip stale">⟳ STALE</span>';
   const worst=Math.max(0,...(p.windows??[]).map(w=>w.percent));
@@ -276,7 +277,7 @@ function renderBoard(){
         : `<span class="nodata">${HINTS[p.usageError]??'no usage data yet'}</span>`
       }</div>
       ${chip(p)}
-      <button class="board-btn" onclick="board('${p.name}')" title="Open a Windows Terminal tab on this account">Board</button>
+      <button class="board-btn" onclick="board('${p.name}')" title="${p.loggedOut?'Sign back in to this account':'Open a Windows Terminal tab on this account'}">${p.loggedOut?'Log in':'Board'}</button>
     </div>`).join('');
   el.querySelectorAll('.flapname').forEach(n=>flapSet(n,n.dataset.text));
   el.querySelectorAll('.row').forEach(r=>r.addEventListener('keydown',e=>{
@@ -374,7 +375,12 @@ function renderMcp(){
 // ── actions ────────────────────────────────────────────────────────────
 async function api(p,body){ const r=await fetch(p,body?{method:'POST',body:JSON.stringify(body)}:{}); return r.json(); }
 function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),3200); }
-async function board(name){ const r=await api('/api/launch',{name}); toast(r.error??`Opened ${name} in Windows Terminal`); }
+async function board(name){
+  const p=state?.profiles?.find(x=>x.name===name);
+  const login=!!p?.loggedOut;
+  const r=await api('/api/launch',{name,login});
+  toast(r.error??(login?`${name} is logged out — opened its sign-in in Windows Terminal`:`Opened ${name} in Windows Terminal`));
+}
 async function transfer(id){
   const to=$('#sel-'+id.slice(0,8)).value;
   const s=state.sessions.find(x=>x.id===id);

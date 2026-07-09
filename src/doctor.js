@@ -9,6 +9,7 @@ import { readJson, colorize, bold, dim, timeUntil } from './util.js';
 import { listProfiles } from './registry.js';
 import { SHARED_SUBDIRS } from './shared.js';
 import { readOauth, fetchUsage } from './usage.js';
+import { sameAccountValidSource } from './oauth.js';
 import { wtDetected, wtInstalled, wtInSync } from './wt.js';
 import { memoryStatus } from './memory.js';
 
@@ -28,8 +29,11 @@ function checkProfile(p) {
   if (!fs.existsSync(dir)) return [err(`profile dir missing: ${dir} — remove with: ccm remove ${p.name}`)];
 
   const oauth = readOauth(p.name);
-  if (!oauth?.accessToken) results.push(warn('not logged in — launch it and run /login'));
-  else if (oauth.expiresAt && oauth.expiresAt < Date.now()) {
+  if (!oauth?.accessToken) {
+    const other = sameAccountValidSource(p.name);
+    results.push(warn(`logged out — run: ccm login ${p.name}`
+      + (other ? ` (this account is still logged in via ${other}; that rotated the shared token)` : '')));
+  } else if (oauth.expiresAt && oauth.expiresAt < Date.now()) {
     results.push(warn('token expired — refreshes automatically on next launch'));
   } else if (oauth.expiresAt) {
     results.push(ok(`token valid, expires in ${timeUntil(new Date(oauth.expiresAt).toISOString())}`));

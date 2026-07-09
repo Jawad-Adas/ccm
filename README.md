@@ -44,7 +44,7 @@ Requires Node 18+ and Claude Code on PATH. **Zero dependencies.** Your `~/.claud
 ## What you get
 
 - **Launching is switching.** `ccm work` starts Claude Code on the *work* account. `ccm personal` in another tab starts the second one. Both run at once.
-- **The board.** Full-screen split-flap TUI: accounts as rows, quota windows as tile meters, amber reset clocks, status chips (`✦ MOST HEADROOM`, `▲ ALMOST FULL`, `■ FULL`). Add accounts, resume sessions, and run health checks without leaving it.
+- **The board.** Full-screen split-flap TUI: accounts as rows, quota windows as tile meters, amber reset clocks, status chips (`✦ MOST HEADROOM`, `▲ ALMOST FULL`, `■ FULL`, `✕ LOGGED OUT`). Add (`a`) and remove (`-`) accounts, resume sessions, and run health checks without leaving it.
 - **A web twin.** `ccm ui` serves the same board on `127.0.0.1` and launches accounts into Windows Terminal tabs.
 - **Quota-aware picker.** Accounts sort most-headroom-first, so picking the account with room is the default gesture — switching stays your explicit choice.
 - **Move a session across accounts.** Hit a limit mid-conversation? `ccm move-session personal` copies the session to another account and resumes it there. The original stays put.
@@ -75,6 +75,7 @@ Requires Node 18+ and Claude Code on PATH. **Zero dependencies.** Your `~/.claud
 | `ccm pick` | Force the picker (ignores any pin) |
 | `ccm import [name]` | Adopt the current `~/.claude` login, including session history so `--resume` sees past conversations |
 | `ccm add <name>` | New profile + first login |
+| `ccm login <name>` | Sign back in to a profile whose saved token was cleared |
 | `ccm list` | Profiles at a glance (email, plan, running/last-used) |
 | `ccm remove <name>` | Delete a profile (confirms; refuses if running) |
 | `ccm status [--fresh\|--json]` | Usage bars, reset times, severity for every account |
@@ -111,6 +112,9 @@ ccm deliberately does **not** auto-rotate accounts when quota runs out — rotat
 
 **Will it touch my existing `~/.claude`?**
 Never. ccm is purely additive — `ccm import` *copies* your login into a profile; the original and the plain `claude` command keep working untouched.
+
+**A logged-in account suddenly asks me to log in — why?**
+If the *same* Anthropic account is live in two places (say a ccm profile **and** your default `~/.claude`), they share one refresh token. Those tokens are single-use and rotate on every refresh, so whichever side refreshes second eventually gets rejected and Claude Code clears its own credentials. ccm detects that cleared state and, instead of dropping you at a surprise login screen, refuses the launch and points you to `ccm login <name>` — shown as a **✕ LOGGED OUT** chip on the board and flagged by `ccm doctor`. To avoid it entirely, use each account from **one** place.
 
 **macOS / Linux?**
 Built and daily-driven on Windows. The core (profiles, board, picker, quota, move-session) is plain Node with no Windows-only APIs, but other platforms are untested — Windows Terminal tabs and toast notifications are Windows-only. Reports and PRs welcome.

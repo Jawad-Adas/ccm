@@ -26,6 +26,21 @@ export function isExpired(oauth, now = Date.now()) {
   return !oauth?.expiresAt || oauth.expiresAt <= now + REFRESH_SKEW_MS;
 }
 
+// Whether a profile can start a session without dead-ending at Claude's login
+// screen. 'logged-out' means the stored token is empty or unusable — the classic
+// symptom being that the same account was live elsewhere, the (single-use)
+// refresh token rotated, and Claude Code cleared these credentials on its next
+// failed refresh. A present-but-expired token with a refresh token is still 'ok':
+// Claude Code refreshes it on launch (and if THAT fails, the next check catches it).
+export function authState(name) {
+  const oauth = readOauth(name);
+  const hasAccess = !!oauth?.accessToken;
+  const hasRefresh = !!oauth?.refreshToken;
+  if (!hasAccess) return 'logged-out';
+  if (isExpired(oauth) && !hasRefresh) return 'logged-out';
+  return 'ok';
+}
+
 // Persist rotated credentials without disturbing the rest of the file
 // (mcpOAuth etc.). Write-then-rename so a crash can't leave a half-written
 // credentials file that would log the account out.
@@ -96,6 +111,22 @@ function credentialSources() {
     ...listProfiles().map((p) => ({ label: p.name, dir: profileDir(p.name) })),
     { label: '~/.claude', dir: DEFAULT_CLAUDE_DIR },
   ];
+}
+
+// When a profile is logged out, report the SAME Anthropic account still valid in
+// another source on this machine (another profile, or the ~/.claude default).
+// That other login is usually what rotated the shared refresh token out from
+// under this profile — surfacing it turns a mystery ("why is my logged-in
+// account asking me to log in?") into an explanation. Returns its label or null.
+export function sameAccountValidSource(name) {
+  const wantId = accountIdOf(profileDir(name));
+  if (!wantId) return null;
+  for (const src of credentialSources()) {
+    if (src.dir === profileDir(name) || accountIdOf(src.dir) !== wantId) continue;
+    const o = readJson(path.join(src.dir, '.credentials.json'), null)?.claudeAiOauth;
+    if (o?.accessToken && !isExpired(o)) return src.label;
+  }
+  return null;
 }
 
 // An access token that can query this profile's usage. Prefers the profile's
