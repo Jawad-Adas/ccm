@@ -6,6 +6,7 @@
 
 Unlimited named accounts. All running **at the same time**. Every quota on one board.
 
+[![npm](https://img.shields.io/npm/v/ccm-account-manager?color=FAB219&label=npm)](https://www.npmjs.com/package/ccm-account-manager)
 [![license: MIT](https://img.shields.io/badge/license-MIT-FAB219)](LICENSE)
 [![node ≥ 18](https://img.shields.io/badge/node-%E2%89%A5%2018-FAB219)](package.json)
 [![dependencies: 0](https://img.shields.io/badge/dependencies-0-FAB219)](package.json)
@@ -31,8 +32,7 @@ If that's a problem you have, a ⭐ helps other multi-account people find this.
 ## 30-second start
 
 ```powershell
-git clone https://github.com/Jawad-Adas/ccm && cd ccm
-npm install -g .
+npm install -g ccm-account-manager
 
 ccm import work        # adopt your current ~/.claude login as profile "work"
 ccm add personal       # opens Claude Code once — log in with account #2, then /exit
@@ -40,6 +40,16 @@ ccm                    # the board. pick a row, press enter.
 ```
 
 Requires Node 18+ and Claude Code on PATH. **Zero dependencies.** Your `~/.claude` and the plain `claude` command are never touched — ccm is purely additive.
+
+<details>
+<summary>Prefer to run from source?</summary>
+
+```powershell
+git clone https://github.com/Jawad-Adas/ccm && cd ccm
+npm install -g .
+```
+
+</details>
 
 ## What you get
 
